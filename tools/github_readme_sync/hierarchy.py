@@ -25,6 +25,7 @@ from tools.github_readme_sync.constants import (
     IGNORE_TABLES,
     REGEX_CSV_TABLE,
 )
+from security import safe_requests
 
 HIERARCHY_FILE = "hierarchy.md"
 CATEGORY_PREFIX = "# "
@@ -350,11 +351,11 @@ def check_url(url) -> requests.Response:
         response = requests.head(url, timeout=5, headers=headers)
     except requests.RequestException:
         # If HEAD fails, try GET instead
-        response = requests.get(url, timeout=5, headers=headers)
+        response = safe_requests.get(url, timeout=5, headers=headers)
     else:
         # If HEAD succeeds but returns non-2xx, try GET
         if not (200 <= response.status_code <= 299):
-            response = requests.get(url, timeout=5, headers=headers)
+            response = safe_requests.get(url, timeout=5, headers=headers)
 
     return response
 
