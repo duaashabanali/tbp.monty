@@ -32,6 +32,7 @@ dependencies = [
     'tqdm', # imported via conda (conda-forge::tqdm)
     'typing-extensions',
     'wandb', # imported via conda (conda-forge::wandb)
+    "fickling>=0.1.3,~=0.1.0",
 ]
 description = 'Thousand Brains Project Monty'
 dynamic = ['version']
