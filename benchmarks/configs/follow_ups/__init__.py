@@ -10,9 +10,9 @@
 
 import os
 import pathlib
-import pickle
 
 from tbp.monty.frameworks.run_env import setup_env
+import fickling
 
 setup_env()
 
@@ -23,5 +23,5 @@ names = [file.split(".")[0] for file in files]
 CONFIGS = {}
 for file, name in zip(files, names):
     with open(os.path.join(current_dir, file), "rb") as f:
-        config = pickle.load(f)
+        config = fickling.load(f)
         CONFIGS[name] = config
