@@ -8,8 +8,9 @@
 # https://opensource.org/licenses/MIT.
 
 from dataclasses import asdict
-
 from benchmarks.configs.names import MyExperiments
+
+from benchmarks.configs.first_experiment import first_experiment
 
 # Add your experiment configurations here
 # e.g.: my_experiment_config = dict(...)
@@ -19,5 +20,6 @@ experiments = MyExperiments(
     # For each experiment name in MyExperiments, add its corresponding
     # configuration here.
     # e.g.: my_experiment=my_experiment_config
+    first_experiment=first_experiment,
 )
 CONFIGS = asdict(experiments)

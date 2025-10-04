@@ -14,6 +14,7 @@ from pprint import pformat
 
 import numpy as np
 import quaternion
+from torch.utils.data import Dataset
 from typing_extensions import Self
 
 from tbp.monty.frameworks.actions.action_samplers import UniformlyDistributedSampler
@@ -41,6 +42,7 @@ from tbp.monty.frameworks.models.motor_system_state import (
 from .embodied_environment import EmbodiedEnvironment
 
 __all__ = [
+    "EnvironmentDataset",
     "EnvironmentDataLoader",
     "EnvironmentDataLoaderPerObject",
     "InformedEnvironmentDataLoader",
@@ -51,6 +53,72 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
+class EnvironmentDataset(Dataset):
+    """Wraps an embodied environment with a :class:`torch.utils.data.Dataset`.
+
+    TODO: Change the name of this class to reflect the interactiveness. Monty doesn't
+    work with static datasets, it interacts with the environment.
+
+    Attributes:
+        env_init_func: Callable function used to create the embodied environment. This
+            function should return a class implementing :class:`.EmbodiedEnvironment`
+        env_init_args: Arguments to `env_init_func`
+        n_actions_per_epoch: Number of actions per epoch. Used to determine
+            the number of observations this dataset will return per epoch. It can be
+            viewed as the dataset size.
+        transform: Callable used to tranform the observations returned by the dataset
+
+    Note:
+        Main idea is to separate concerns:
+        - dataset owns the environment and creates it at initialization
+        - dataset just handles the :meth:`__getitem__` method
+        - dataset does not handle motor activity, it just accepts action from
+            policy and uses it to look up the next observation
+    """
+
+    def __init__(self, env_init_func, env_init_args, rng, transform=None):
+        self.rng = rng
+        self.transform = transform
+        if self.transform is not None:
+            for t in self.transform:
+                if t.needs_rng:
+                    t.rng = self.rng
+        env = env_init_func(**env_init_args)
+        assert isinstance(env, EmbodiedEnvironment)
+        self.env = env
+
+    @property
+    def action_space(self):
+        return self.env.action_space
+
+    def reset(self):
+        observation = self.env.reset()
+        state = self.env.get_state()
+
+        if self.transform is not None:
+            observation = self.apply_transform(self.transform, observation, state)
+        return observation, ProprioceptiveState(state) if state else None
+
+    def close(self):
+        self.env.close()
+
+    def apply_transform(self, transform, observation, state):
+        if isinstance(transform, list):
+            for t in transform:
+                observation = t(observation, state)
+        else:
+            observation = transform(observation, state)
+        return observation
+
+    def __getitem__(self, action: Action):
+        observation = self.env.step(action)
+        state = self.env.get_state()
+        if self.transform is not None:
+            observation = self.apply_transform(self.transform, observation, state)
+        return observation, ProprioceptiveState(state) if state else None
+
+    def __len__(self):
+        return math.inf
 
 class EnvironmentDataLoader:
     """Provides an interface to an embodied environment.

@@ -88,7 +88,8 @@ class UnsupervisedInferenceExperiments:
 @dataclass
 class MyExperiments:
     # Add your experiment names here
-    pass
+    # pass
+    first_experiment: dict
 
 
 current_module = sys.modules[__name__]
