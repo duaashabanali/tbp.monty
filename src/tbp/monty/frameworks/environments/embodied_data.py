@@ -14,7 +14,7 @@ from pprint import pformat
 
 import numpy as np
 import quaternion
-from torch.utils.data import Dataset
+# from torch.utils.data import Dataset
 from typing_extensions import Self
 
 from tbp.monty.frameworks.actions.action_samplers import UniformlyDistributedSampler
@@ -42,7 +42,7 @@ from tbp.monty.frameworks.models.motor_system_state import (
 from .embodied_environment import EmbodiedEnvironment
 
 __all__ = [
-    "EnvironmentDataset",
+    # "EnvironmentDataset",
     "EnvironmentDataLoader",
     "EnvironmentDataLoaderPerObject",
     "InformedEnvironmentDataLoader",
@@ -53,8 +53,8 @@ __all__ = [
 
 logger = logging.getLogger(__name__)
 
-class EnvironmentDataset(Dataset):
-    """Wraps an embodied environment with a :class:`torch.utils.data.Dataset`.
+# class EnvironmentDataset(Dataset):
+"""Wraps an embodied environment with a :class:`torch.utils.data.Dataset`.
 
     TODO: Change the name of this class to reflect the interactiveness. Monty doesn't
     work with static datasets, it interacts with the environment.
@@ -76,49 +76,49 @@ class EnvironmentDataset(Dataset):
             policy and uses it to look up the next observation
     """
 
-    def __init__(self, env_init_func, env_init_args, rng, transform=None):
-        self.rng = rng
-        self.transform = transform
-        if self.transform is not None:
-            for t in self.transform:
-                if t.needs_rng:
-                    t.rng = self.rng
-        env = env_init_func(**env_init_args)
-        assert isinstance(env, EmbodiedEnvironment)
-        self.env = env
+    # def __init__(self, env_init_func, env_init_args, rng, transform=None):
+    #     self.rng = rng
+    #     self.transform = transform
+    #     if self.transform is not None:
+    #         for t in self.transform:
+    #             if t.needs_rng:
+    #                 t.rng = self.rng
+    #     env = env_init_func(**env_init_args)
+    #     assert isinstance(env, EmbodiedEnvironment)
+    #     self.env = env
 
-    @property
-    def action_space(self):
-        return self.env.action_space
+    # @property
+    # def action_space(self):
+    #     return self.env.action_space
 
-    def reset(self):
-        observation = self.env.reset()
-        state = self.env.get_state()
+    # def reset(self):
+    #     observation = self.env.reset()
+    #     state = self.env.get_state()
 
-        if self.transform is not None:
-            observation = self.apply_transform(self.transform, observation, state)
-        return observation, ProprioceptiveState(state) if state else None
+    #     if self.transform is not None:
+    #         observation = self.apply_transform(self.transform, observation, state)
+    #     return observation, ProprioceptiveState(state) if state else None
 
-    def close(self):
-        self.env.close()
+    # def close(self):
+    #     self.env.close()
 
-    def apply_transform(self, transform, observation, state):
-        if isinstance(transform, list):
-            for t in transform:
-                observation = t(observation, state)
-        else:
-            observation = transform(observation, state)
-        return observation
+    # def apply_transform(self, transform, observation, state):
+    #     if isinstance(transform, list):
+    #         for t in transform:
+    #             observation = t(observation, state)
+    #     else:
+    #         observation = transform(observation, state)
+    #     return observation
 
-    def __getitem__(self, action: Action):
-        observation = self.env.step(action)
-        state = self.env.get_state()
-        if self.transform is not None:
-            observation = self.apply_transform(self.transform, observation, state)
-        return observation, ProprioceptiveState(state) if state else None
+    # def __getitem__(self, action: Action):
+    #     observation = self.env.step(action)
+    #     state = self.env.get_state()
+    #     if self.transform is not None:
+    #         observation = self.apply_transform(self.transform, observation, state)
+    #     return observation, ProprioceptiveState(state) if state else None
 
-    def __len__(self):
-        return math.inf
+    # def __len__(self):
+    #     return math.inf
 
 class EnvironmentDataLoader:
     """Provides an interface to an embodied environment.

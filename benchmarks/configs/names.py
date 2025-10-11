@@ -90,6 +90,9 @@ class MyExperiments:
     # Add your experiment names here
     # pass
     first_experiment: dict
+    surf_agent_2obj_train: dict
+    surf_agent_2obj_eval: dict
+
 
 
 current_module = sys.modules[__name__]
