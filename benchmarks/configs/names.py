@@ -92,6 +92,7 @@ class MyExperiments:
     first_experiment: dict
     surf_agent_2obj_train: dict
     surf_agent_2obj_eval: dict
+    surf_agent_2obj_unsupervised: dict
 
 
 
