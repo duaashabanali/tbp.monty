@@ -93,6 +93,9 @@ class MyExperiments:
     surf_agent_2obj_train: dict
     surf_agent_2obj_eval: dict
     surf_agent_2obj_unsupervised: dict
+    dist_agent_5lm_2obj_train: dict
+    dist_agent_5lm_2obj_eval: dict
+    two_agent_monty_experiment: dict
 
 
 
