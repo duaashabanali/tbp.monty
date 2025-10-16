@@ -266,6 +266,39 @@ class TwoAgentCommunicationExperiment(MontyObjectRecognitionExperiment):
             return list(set(self.model.sm_to_agent_dict.values()))
         return ["agent_id_0", "agent_id_1"]  # Default for two agents
 
+#   Extend the positioning logic to handle multiple agents:
+
+#   def pre_episode(self):
+#       """Position all agents before episode starts."""
+#       super().pre_episode()
+
+#       # Position each agent independently
+#       for agent_id in self.get_agent_ids():
+#           sensor_module_id = self.get_view_finder_for_agent(agent_id)
+#           if sensor_module_id:
+#               self.position_agent(agent_id, sensor_module_id)
+
+#       self.comm_manager.timestep = 0
+
+#   def position_agent(self, agent_id: str, view_finder_id: str):
+#       """
+#       Position a specific agent to get a good view of the target object.
+#       """
+#       # Create a temporary motor policy for this agent
+#       positioning_policy = InformedPolicy(agent_id=agent_id, ...)
+
+#       # Use the policy to position the agent
+#       max_positioning_steps = 50
+#       for step in range(max_positioning_steps):
+#           obs = self.dataloader.get_observation_for_agent(agent_id)
+
+#           if self.has_good_view(obs, agent_id):
+#               break
+
+#           action = positioning_policy.positioning_call(obs)
+#           self.dataloader.apply_action(agent_id, action)
+
+
     def pre_episode(self):
         """Called before each episode starts."""
         super().pre_episode()
@@ -276,7 +309,6 @@ class TwoAgentCommunicationExperiment(MontyObjectRecognitionExperiment):
     def process_agent_observations(self, observations: Dict, states: Dict):
         """
         Process observations from all agents and facilitate communication.
-          
         Args:
             observations: Dictionary of observations keyed by agent_id
             states: Dictionary of agent states keyed by agent_id
@@ -333,7 +365,192 @@ class TwoAgentCommunicationExperiment(MontyObjectRecognitionExperiment):
         # Log communication statistics
         self.logger.info(f"Episode completed after {self.comm_manager.timestep} timesteps")
         self.logger.info(f"Shared beliefs: {self.comm_manager.shared_beliefs}")
+        
 
+# class TwoAgentCommunicationExperiment(MontyObjectRecognitionExperiment):
+
+#     def setup_experiment(self, config):
+#         """Override to set up multi-agent motor system."""
+#         super().setup_experiment(config)
+
+#         # Replace single motor system with multi-agent version
+#         self.multi_agent_motor_system = MultiAgentMotorSystem({
+#             "agent_id_0": {
+#                 "policy_class": InformedPolicy,
+#                 "policy_args": {...}  # Config for agent 0
+#             },
+#             "agent_id_1": {
+#                 "policy_class": InformedPolicy,
+#                 "policy_args": {...}  # Config for agent 1
+#             }
+#         })
+
+#     def run_episode(self):
+#         """Override to handle multi-agent movement."""
+#         self.pre_episode()
+
+#         while not self.is_done():
+#             # 1. Get observations from all agents
+#             observations = self.dataloader.get_observations()
+
+#             # 2. Process observations through sensor modules
+#             processed_obs = self.process_multi_agent_observations(observations)
+
+#             # 3. Update learning modules
+#             self.update_learning_modules(processed_obs)
+
+#             # 4. Agents communicate and share hypotheses
+#             self.facilitate_agent_communication()
+
+#             # 5. Propose actions for each agent
+#             proposed_actions = self.multi_agent_motor_system.propose_actions(
+#                 observations,
+#                 self.dataloader.get_agent_states()
+#             )
+
+#             # 6. Coordinate actions (optional)
+#             coordinated_actions = self.multi_agent_motor_system.coordinate_actions(
+#                 proposed_actions,
+#                 coordination_strategy="independent"  # or "turn_taking", 
+#   etc.
+#             )
+
+#             # 7. Execute actions for all agents
+#             self.execute_multi_agent_actions(coordinated_actions)
+
+#             # 8. Check terminal conditions
+#             self.check_episode_termination()
+
+#         self.post_episode()
+
+#     def facilitate_agent_communication(self):
+#         """
+#         Allow agents to share information between action selection.
+#         """
+#         for agent_id in self.get_agent_ids():
+#             lm = self.get_learning_module_for_agent(agent_id)
+
+#             # Share current hypotheses
+#             if hasattr(lm, 'possible_matches'):
+#                 self.comm_manager.broadcast(
+#                     from_agent_id=agent_id,
+#                     message_type="hypothesis",
+#                     content={
+#                         "hypotheses": lm.possible_matches,
+#                         "confidence": lm.get_confidence()
+#                     }
+#                 )
+
+#         # Process received messages
+#         for agent_id in self.get_agent_ids():
+#             messages = self.comm_manager.get_messages(agent_id)
+#             self.update_agent_beliefs(agent_id, messages)
+#             self.logger.debug(f"Agent {agent_id} processed {len(messages)} messages")
+
+
+# # 4. Update the Dataloader
+
+# #   Modify the dataloader to handle multiple agent actions:
+
+#   class MultiAgentEnvironmentDataLoader(InformedEnvironmentDataLoader):
+#       """
+#       Dataloader that supports multiple independent agents.
+#       """
+
+#       def apply_action(self, agent_id: str, action: Action):
+#           """Apply action to a specific agent."""
+#           if action is not None:
+#               self.dataset.apply_action_to_agent(agent_id, action)
+
+#       def execute_multi_agent_actions(self, actions: Dict[str, Action]):
+#           """
+#           Execute actions for multiple agents simultaneously.
+          
+#           Args:
+#               actions: Dict mapping agent_id to Action
+#           """
+#           for agent_id, action in actions.items():
+#               if action is not None:
+#                   self.apply_action(agent_id, action)
+
+#           # Step the environment forward
+#           self.dataset.step()
+
+#       def get_observations(self) -> Dict:
+#           """
+#           Get observations from all agents.
+          
+#           Returns:
+#               Dict mapping agent_id to observations
+#           """
+#           return self.dataset.get_all_agent_observations()
+
+
+# #  Coordination Strategies
+
+# #   Implement different coordination strategies:
+
+#   class CoordinationStrategy:
+#       """Base class for agent coordination strategies."""
+
+#       def coordinate(self, proposed_actions: Dict, 
+#                      agent_states: Dict,
+#                      comm_manager: MultiAgentCommunicationManager) -> Dict:
+#           raise NotImplementedError
+
+#   class IndependentStrategy(CoordinationStrategy):
+#       """Agents act completely independently."""
+#       def coordinate(self, proposed_actions, agent_states, comm_manager):
+#           return proposed_actions
+
+#   class TurnTakingStrategy(CoordinationStrategy):
+#       """Agents take turns moving."""
+#       def __init__(self):
+#           self.current_agent_idx = 0
+#           self.agent_ids = None
+
+#       def coordinate(self, proposed_actions, agent_states, comm_manager):
+#           if self.agent_ids is None:
+#               self.agent_ids = list(proposed_actions.keys())
+
+#           # Only the current agent moves
+#           active_agent = self.agent_ids[self.current_agent_idx]
+#           coordinated = {aid: None for aid in proposed_actions}
+#           coordinated[active_agent] = proposed_actions[active_agent]
+
+#           # Switch to next agent
+#           self.current_agent_idx = (self.current_agent_idx + 1) %
+#   len(self.agent_ids)
+#           return coordinated
+
+# class CollaborativeStrategy(CoordinationStrategy):
+#     """
+#     Agents coordinate to avoid exploring the same regions.
+#     """
+#     def coordinate(self, proposed_actions, agent_states, comm_manager):
+#         # Check if agents are trying to explore similar regions
+#         coordinated = proposed_actions.copy()
+
+#         agent_positions = {
+#             aid: state['position']
+#             for aid, state in agent_states.items()
+#         }
+
+#         # If agents are too close, redirect one
+#         for aid1, aid2 in itertools.combinations(agent_positions.keys(),
+#   2):
+#             distance = np.linalg.norm(
+#                 np.array(agent_positions[aid1]) - np.array(agent_positions[aid2])
+#             )
+
+#             if distance < 0.1:  # Too close
+#                 # Redirect agent 2 to explore a different area
+#                 coordinated[aid2] = self.suggest_alternative_action(
+#                     agent_states[aid2],
+#                     avoid_position=agent_positions[aid1]
+#                 )
+
+#         return coordinated
 
   # ========================================================================
   # Multi-Agent Monty Configuration
@@ -351,7 +568,7 @@ class TwoAgentMontyConfig(PatchAndViewMontyConfig):
 
     learning_module_configs: Dict = field(
         default_factory=lambda: dict(
-              learning_module_0=dict(
+            learning_module_0=dict(
                 learning_module_class=GraphLM,
                 learning_module_args=dict(
                 #     k=5,
