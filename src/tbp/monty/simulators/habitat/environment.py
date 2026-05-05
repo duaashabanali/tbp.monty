@@ -102,9 +102,10 @@ class HabitatEnvironment(SimulatedObjectEnvironment):
         data_path: str | Path | None = None,
     ):
         super().__init__()
-        # TODO: Change the configuration to configure multiple agents
-        agents = [agents]
-        self._agents = []
+        # # TODO: Change the configuration to configure multiple agents
+        # agents = [agents]
+        self._agents = []   # changed to a list to support multiple agents
+
         for config in agents:
             cfg_dict = asdict(config) if is_dataclass(config) else config
             agent_type = cfg_dict["agent_type"]
