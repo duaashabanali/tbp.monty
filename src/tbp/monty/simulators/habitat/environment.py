@@ -95,7 +95,8 @@ class HabitatEnvironment(SimulatedObjectEnvironment):
 
     def __init__(
         self,
-        agents: dict | AgentConfig,
+        # agents: dict | AgentConfig,
+        agents: list[dict | AgentConfig],
         objects: list[dict | ObjectConfig] | None = None,
         scene_id: str | None = None,
         seed: int = 42,
