@@ -346,6 +346,14 @@ class LearningModule(metaclass=abc.ABCMeta):
         """Take a state dict as an argument and set state for this LM."""
         pass
 
+    def send_agent_message(self) -> dict | None:
+        """Package what this agent wants to communicate to others."""
+        ...
+
+    def receive_agent_message(self, messages: list[dict]):
+        """Integrate messages from other agents."""
+        ...
+
 
 class LMMemory(metaclass=abc.ABCMeta):
     """Like a long-term memory storing all the knowledge an LM has."""
