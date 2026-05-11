@@ -12,6 +12,7 @@ import logging
 from pathlib import Path
 from typing import Any
 
+import wandb
 import torch
 
 from tbp.monty.context import RuntimeContext
@@ -20,6 +21,7 @@ from tbp.monty.frameworks.experiments.mode import ExperimentMode
 from tbp.monty.frameworks.experiments.object_recognition_experiments import (
     MontyObjectRecognitionExperiment,
 )
+from tbp.monty.frameworks.utils.logging_utils import get_stats_per_lm
 
 __all__ = ["MultiAgentMontyExperiment"]
 
@@ -149,6 +151,10 @@ class MultiAgentMontyExperiment(MontyObjectRecognitionExperiment):
             self.live_plotter.initialize_online_plotting()
 
     def post_episode(self, steps: int) -> None:
+        # Buffer extra-agent metrics before the main logger commits so they land
+        # on the same WandB step as agent 0's data.
+        self._log_extra_agents_buffered()
+
         self.logger_handler.post_episode(self.logger_args)
         for agent in self.monty_agents:
             agent.post_episode()
@@ -161,6 +167,47 @@ class MultiAgentMontyExperiment(MontyObjectRecognitionExperiment):
             self.total_eval_steps += steps
 
         self.env_interface.post_episode()
+
+    def _log_extra_agents_buffered(self) -> None:
+        """Buffer per-episode metrics for agents beyond agent 0 into WandB.
+
+        Called BEFORE the main logger commits so that extra-agent data lands on
+        the same WandB step as agent 0's LM_0 metrics. Uses commit=False so the
+        framework's final wandb.log({}) commit flushes everything together.
+        """
+        if not hasattr(self, "monty_agents") or len(self.monty_agents) <= 1:
+            return
+        target = getattr(self.env_interface, "primary_target", None)
+        if target is None:
+            return
+        mode = self.experiment_mode
+        episode = self.eval_episodes if mode is ExperimentMode.EVAL else self.train_episodes
+        seed = self._rng_seed_history[-1] if self._rng_seed_history else self.config["seed"]
+        metrics = {}
+        for agent_idx in range(1, len(self.monty_agents)):
+            agent = self.monty_agents[agent_idx]
+            try:
+                stats = get_stats_per_lm(agent, target, seed)
+            except Exception:
+                continue
+            prefix = f"agent_{agent_idx}"
+            for lm_key, lm_stats in stats.items():
+                if not lm_key.startswith("LM_"):
+                    continue
+                metrics[f"{prefix}/{lm_key}/episode/steps_to_individual_ts"] = (
+                    lm_stats.get("individual_ts_reached_at_step")
+                )
+                metrics[f"{prefix}/{lm_key}/episode/individual_ts_rotation_error"] = (
+                    lm_stats.get("individual_ts_rotation_error")
+                )
+                metrics[f"{prefix}/{lm_key}/episode/avg_prediction_error"] = (
+                    lm_stats.get("episode_avg_prediction_error")
+                )
+                metrics[f"{prefix}/{lm_key}/episode/primary_performance"] = (
+                    lm_stats.get("primary_performance")
+                )
+        if metrics:
+            wandb.log(metrics, step=episode, commit=False)
 
     # ------------------------------------------------------------------
     # Step loop
