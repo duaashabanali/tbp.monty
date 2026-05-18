@@ -2,7 +2,7 @@
 
 defaults:
   - /env_interface: eval_distinctobj_random
-  - /logging: basic_warning_wandb_monty_runs
+  - /logging: detailed_debug_monty_runs
 
 experiment:
   _target_: tbp.monty.frameworks.experiments.multi_agent_experiment.MultiAgentMontyExperiment
