@@ -14,6 +14,7 @@ from typing import Any
 
 import wandb
 import torch
+import pandas as pd
 
 from tbp.monty.context import RuntimeContext
 from tbp.monty.frameworks.actions.actions import Action
@@ -166,7 +167,53 @@ class MultiAgentMontyExperiment(MontyObjectRecognitionExperiment):
             self.eval_episodes += 1
             self.total_eval_steps += steps
 
+        self._write_extra_agents_to_csv()
         self.env_interface.post_episode()
+
+    def _write_extra_agents_to_csv(self) -> None:
+        """Append per-episode stats for agents beyond agent 0 to eval/train_stats.csv.
+
+        Agent 0's row is written by the parent-class CSV handler (BasicCSVStatsHandler).
+        This method appends one additional row per LM per extra agent to the same file,
+        with lm_id set to 'agent_N_LM_0' so each row is uniquely identifiable.
+        """
+        if not hasattr(self, "monty_agents") or len(self.monty_agents) <= 1:
+            return
+        target = getattr(self.env_interface, "primary_target", None)
+        if target is None:
+            return
+        seed = self._rng_seed_history[-1] if self._rng_seed_history else self.config["seed"]
+        mode = self.experiment_mode
+        csv_path = self.output_dir / f"{mode}_stats.csv"
+
+        for agent_idx in range(1, len(self.monty_agents)):
+            agent = self.monty_agents[agent_idx]
+            try:
+                stats = get_stats_per_lm(agent, target, seed)
+            except Exception:
+                continue
+
+            # Build one row per LM, labelled agent_N_LM_0 etc.
+            rows = {}
+            for lm_key, lm_stats in stats.items():
+                if lm_key.startswith("LM_"):
+                    row_key = f"agent_{agent_idx}_{lm_key}"
+                    rows[row_key] = lm_stats
+
+            if not rows:
+                continue
+
+            df = pd.DataFrame.from_dict(rows, orient="index")
+            df["lm_id"] = df.index
+
+            # Reorder columns to match the existing CSV so values land in the
+            # right columns when appending without a header.
+            if csv_path.exists():
+                existing_cols = pd.read_csv(csv_path, nrows=0, index_col=0).columns.tolist()
+                df = df.reindex(columns=existing_cols)
+
+            header = not csv_path.exists()
+            df.to_csv(csv_path, mode="a", header=header)
 
     def _log_extra_agents_buffered(self) -> None:
         """Buffer per-episode metrics for agents beyond agent 0 into WandB.
