@@ -253,7 +253,7 @@ class MultiAgentMontyExperiment(MontyObjectRecognitionExperiment):
                 metrics[f"{prefix}/{lm_key}/episode/primary_performance"] = (
                     lm_stats.get("primary_performance")
                 )
-        if metrics:
+        if metrics and wandb.run is not None:
             wandb.log(metrics, step=episode, commit=False)
 
     # ------------------------------------------------------------------

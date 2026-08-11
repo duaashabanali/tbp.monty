@@ -8,11 +8,11 @@ This document describes the implementation of multiple distinct Monty agents sha
 
 The implementation is organized into three layers:
 
-| Layer | What it does | Status |
-|-------|-------------|--------|
-| **Layer 1** — Environment | Multiple physical agents in one Habitat sim | Done |
-| **Layer 2** — Experiment orchestration | One `MontyBase` instance per agent, stepped together | Done |
-| **Layer 3** — Inter-agent communication | Message passing between Monty instances | Stub (ready to implement) |
+| Layer                                   | What it does                                         | Status                    |
+| --------------------------------------- | ---------------------------------------------------- | ------------------------- |
+| **Layer 1** — Environment               | Multiple physical agents in one Habitat sim          | Done                      |
+| **Layer 2** — Experiment orchestration  | One `MontyBase` instance per agent, stepped together | Done                      |
+| **Layer 3** — Inter-agent communication | Message passing between Monty instances              | Stub (ready to implement) |
 
 Each agent has its own:
 
@@ -28,17 +28,18 @@ They share one environment and step simultaneously each episode. An episode ends
 ## Files Changed
 
 ### Created
-| File | Purpose |
-|------|---------|
-| `src/tbp/monty/frameworks/experiments/multi_agent_experiment.py` | Layer 2 orchestration class |
-| `src/tbp/monty/conf/environment/habitat_ycb_two_agents.yaml` | Two-agent Habitat environment config |
-| `src/tbp/monty/conf/experiment/two_agent_surf.yaml` | Full self-contained experiment config |
+
+| File                                                             | Purpose                               |
+| ---------------------------------------------------------------- | ------------------------------------- |
+| `src/tbp/monty/frameworks/experiments/multi_agent_experiment.py` | Layer 2 orchestration class           |
+| `src/tbp/monty/conf/environment/habitat_ycb_two_agents.yaml`     | Two-agent Habitat environment config  |
+| `src/tbp/monty/conf/experiment/two_agent_surf.yaml`              | Full self-contained experiment config |
 
 ### Modified
-| File | Change |
-|------|--------|
+
+| File                                              | Change                                                         |
+| ------------------------------------------------- | -------------------------------------------------------------- |
 | `src/tbp/monty/simulators/habitat/environment.py` | Changed `agents` parameter type to `list[dict \| AgentConfig]` |
-| `src/tbp/monty/frameworks/experiments/__init__.py` | Removed import of `MultiAgentMontyExperiment` to fix circular import |
 
 ---
 
@@ -49,6 +50,7 @@ They share one environment and step simultaneously each episode. An episode ends
 `HabitatSim` already natively supported multiple agents. The only change needed was in `HabitatEnvironment.__init__` — its type annotation constrained `agents` to a single config instead of a list.
 
 **Change:**
+
 ```python
 # Before
 agents: dict | AgentConfig
@@ -121,6 +123,7 @@ while True:
 ### Checkpointing
 
 Each agent is saved separately:
+
 ```
 output_dir/
   model_agent_0.pt
@@ -143,6 +146,7 @@ def _communicate_between_agents(self) -> None:
 ```
 
 **Example pattern for a subclass:**
+
 ```python
 def _communicate_between_agents(self) -> None:
     messages = [agent.send_agent_message() for agent in self.monty_agents]
@@ -152,6 +156,7 @@ def _communicate_between_agents(self) -> None:
 ```
 
 What agents could communicate:
+
 - Current best hypothesis (object ID + pose)
 - Evidence scores / uncertainty
 - Goal state (where the agent is headed)
@@ -162,15 +167,19 @@ What agents could communicate:
 ## Config Files
 
 ### Environment config
+
 **File:** [`src/tbp/monty/conf/environment/habitat_ycb_two_agents.yaml`](src/tbp/monty/conf/environment/habitat_ycb_two_agents.yaml)
 
 Defines two `MultiSensorAgent` instances:
+
 - `agent_id_0` at position `[0.0, 1.5, 0.1]`
-- `agent_id_1` at position `[0.3, 1.5, 0.1]` (offset 30 cm to the right)
+- `agent_id_1` at position `[0.3, 1.5, 0.1]` (off
+  set 30 cm to the right)
 
 Both have identical sensor setups: `patch` (zoom 10×) and `view_finder` (zoom 1×), resolution 64×64.
 
 ### Experiment config
+
 **File:** [`src/tbp/monty/conf/experiment/two_agent_surf.yaml`](src/tbp/monty/conf/experiment/two_agent_surf.yaml)
 
 Self-contained YAML (cannot reuse single-agent sub-configs because they hardcode single-agent sensor names). Key settings:
@@ -187,6 +196,7 @@ experiment:
 ```
 
 Both agents point to the same pretrained checkpoint:
+
 ```
 ${constants.pretrained_dir}/surf_agent_1lm_10distinctobj/pretrained/
 ```
@@ -203,10 +213,13 @@ python run.py experiment=two_agent_surf
 > **Note:** Use `experiment=` without a leading `+`. The main `experiment.yaml` already has `experiment: ??` as a required placeholder — using `+experiment=` would try to add a second value and fail with "Multiple values for experiment".
 
 ### To see live sensor output
+
 In `two_agent_surf.yaml`, set:
+
 ```yaml
 show_sensor_output: true
 ```
+
 A matplotlib window will show what each agent's `patch` sensor sees in real time.
 
 ---
@@ -214,6 +227,7 @@ A matplotlib window will show what each agent's `patch` sensor sees in real time
 ## Outputs
 
 ### WandB dashboard
+
 Each run syncs automatically to WandB. Project: `duaaali-monty/Monty`.
 
 Key metrics logged per episode:
@@ -227,6 +241,7 @@ Key metrics logged per episode:
 | `overall/percent_correct` | Accuracy across all episodes in the epoch |
 
 ### CSV output
+
 ```
 /Users/duaaali/tbp/results/monty/projects/monty_runs/two_agent_surf/eval_stats.csv
 ```
@@ -234,6 +249,7 @@ Key metrics logged per episode:
 The logging system keeps only two CSVs at a time (`eval_stats.csv` = current run, `eval_stats_old.csv` = previous run). Use WandB for permanent per-run storage.
 
 ### Loading the CSV
+
 ```python
 import pandas as pd
 import matplotlib.pyplot as plt

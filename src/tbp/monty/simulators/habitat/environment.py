@@ -103,8 +103,11 @@ class HabitatEnvironment(SimulatedObjectEnvironment):
         data_path: str | Path | None = None,
     ):
         super().__init__()
-        # Wrap a single AgentConfig in a list for backward compatibility
-        if not isinstance(agents, list):
+        # Wrap a single AgentConfig/dict in a list for backward compatibility.
+        # Use is_dataclass or check for "agent_type" key (handles OmegaConf
+        # DictConfig as well as plain dicts), since OmegaConf ListConfig is
+        # not a subclass of Python's list.
+        if is_dataclass(agents) or "agent_type" in agents:
             agents = [agents]
         self._agents = []   # changed to a list to support multiple agents
 
