@@ -15,6 +15,7 @@ The implementation is organized into three layers:
 | **Layer 3** — Inter-agent communication | Message passing between Monty instances | Stub (ready to implement) |
 
 Each agent has its own:
+
 - Sensor modules (CameraSM + Probe)
 - Learning module (EvidenceGraphLM)
 - Motor system and policy

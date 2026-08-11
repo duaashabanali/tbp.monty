@@ -103,8 +103,9 @@ class HabitatEnvironment(SimulatedObjectEnvironment):
         data_path: str | Path | None = None,
     ):
         super().__init__()
-        # # TODO: Change the configuration to configure multiple agents
-        # agents = [agents]
+        # Wrap a single AgentConfig in a list for backward compatibility
+        if not isinstance(agents, list):
+            agents = [agents]
         self._agents = []   # changed to a list to support multiple agents
 
         for config in agents:
