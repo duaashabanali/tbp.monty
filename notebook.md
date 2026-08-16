@@ -701,6 +701,10 @@ The object and agents all share y = 1.5, so they're all at the same height — t
 
 The agents don't have their own local coordinate systems for placement — it's all one shared world space. When the simulation starts, Habitat places everything at those absolute coordinates and the agents begin exploring from there.
 
+The sensor positions are relative to the agent's own position — they're local offsets from the agent's body.
+
+So if an agent is at [0.0, 1.5, 0.2] and its sensor has position [0.0, 0.0, 0.0], the sensor ends up at [0.0, 1.5, 0.2] in world space. If the sensor had offset [0.0, 0.1, 0.0], it would be at [0.0, 1.6, 0.2].
+
 ### Analyzing Data From monty_handlers
 
 The plot_utils.py contains utils for plotting the logged data. The logging_utils.py file contains some useful utils for loading logs and printing some summary statistics on them.
