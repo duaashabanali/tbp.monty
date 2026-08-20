@@ -5,23 +5,23 @@ experiment:
     eval_env_interface_args:
       parent_to_child_mapping: null
       object_names:
-      - mug
-      - bowl
-      - potted_meat_can
+      - fork
+      - knife
       - spoon
-      - strawberry
-      - mustard_bottle
-      - dice
-      - golf_ball
-      - c_lego_duplo
+      - mug
       - banana
+      - apple
+      - dice
+      - rubiks_cube
+      - cracker_box
+      - lego_duplo
       object_init_sampler:
         _target_: tbp.monty.frameworks.environments.object_init_samplers.RandomRotation
     eval_env_interface_class: ${monty.class:tbp.monty.experiment.environment.OneObjectPerEpisodeInterface}
     logging:
       monty_log_level: DETAILED
       monty_handlers:
-      - ${monty.class:tbp.monty.frameworks.loggers.monty_handlers.BasicCSVStatsHandler}
+      - ${monty.class:tbp.monty.frameworks.loggers.monty_handlers.MultiAgentCSVStatsHandler}
       - ${monty.class:tbp.monty.frameworks.loggers.monty_handlers.DetailedJSONHandler}
       wandb_handlers: []
       python_log_level: DEBUG
@@ -34,9 +34,9 @@ experiment:
         _target_: wandb.util.generate_id
       wandb_group: debugging
     show_sensor_output: false
-    max_train_steps: 1000
-    max_eval_steps: 500
-    max_total_steps: 5000
+    max_train_steps: 10
+    max_eval_steps: 2500
+    max_total_steps: 2500
     n_train_epochs: 3
     n_eval_epochs: 10
     min_lms_match: 1
@@ -50,11 +50,11 @@ experiment:
         seed: 42
         data_path: ${path.expanduser:${oc.env:MONTY_DATA}/habitat/objects/ycb}
         objects:
-        - name: coneSolid
+        - name: mug
           position:
           - 0.0
           - 1.5
-          - -0.1
+          - 0.0
         agents:
         - agent_type: ${monty.class:tbp.monty.simulators.habitat.MultiSensorAgent}
           agent_args:
@@ -66,7 +66,7 @@ experiment:
             position:
             - 0.0
             - 1.5
-            - 0.1
+            - 0.2
             resolutions:
             - - 64
               - 64
@@ -103,9 +103,9 @@ experiment:
             - view_finder
             height: 0.0
             position:
-            - 0.3
+            - 0.0
             - 1.5
-            - 0.1
+            - -0.2
             resolutions:
             - - 64
               - 64

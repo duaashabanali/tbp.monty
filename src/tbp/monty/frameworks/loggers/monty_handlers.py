@@ -19,6 +19,7 @@ from pathlib import Path
 from pprint import pformat
 from typing import Container, Literal
 
+import pandas as pd
 from typing_extensions import override
 
 from tbp.monty.frameworks.experiments.mode import ExperimentMode
@@ -26,9 +27,15 @@ from tbp.monty.frameworks.models.buffer import BufferEncoder
 from tbp.monty.frameworks.utils.logging_utils import (
     lm_stats_to_dataframe,
     maybe_rename_existing_file,
+    multi_agent_stats_to_dataframe,
 )
 
-__all__ = ["BasicCSVStatsHandler", "DetailedJSONHandler", "MontyHandler"]
+__all__ = [
+    "BasicCSVStatsHandler",
+    "DetailedJSONHandler",
+    "MontyHandler",
+    "MultiAgentCSVStatsHandler",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -291,6 +298,73 @@ class BasicCSVStatsHandler(MontyHandler):
         for c_key in reversed(columns):
             df.insert(0, c_key, df.pop(c_key))
         return df
+
+    def close(self):
+        pass
+
+
+class MultiAgentCSVStatsHandler(MontyHandler):
+    """Grab BASIC-level multi-agent logs and append to train or eval CSV files.
+
+    Companion to ``BasicCSVStatsHandler``, for use with the multi-agent
+    loggers in ``tbp.monty.frameworks.loggers.multi_agent_loggers``.
+    ``BasicCSVStatsHandler`` only picks up dict keys literally prefixed
+    ``LM_`` -- i.e. a single agent's learning modules -- so it silently drops
+    the ``agent_<i>_LM_<j>``-keyed stats those loggers produce. This handler
+    picks up every ``agent_<i>_LM_<j>`` key instead, so an arbitrary number
+    of agents, each with an arbitrary number of learning modules, land as
+    separate rows in the same CSV.
+    """
+
+    @classmethod
+    def log_level(cls):
+        return "BASIC"
+
+    def __init__(self):
+        """Initialize with empty dictionary to keep track of writes per file.
+
+        We only want to include the header the first time we write to a file. This
+        keeps track of writes per file so we can format the file properly.
+        """
+        self.reports_per_file = {}
+
+    @override
+    def report_episode(
+        self,
+        data,
+        output_dir,
+        episode,
+        mode: ExperimentMode = ExperimentMode.TRAIN,
+        **kwargs,
+    ):
+        # episode is ignored when reporting stats to CSV
+        basic_logs = data["BASIC"]
+        mode_key = f"{mode}_stats"
+        output_file = Path(output_dir) / f"{mode}_stats.csv"
+        stats = basic_logs.get(mode_key, {})
+        logger.debug(pformat(stats))
+
+        # Remove file if it existed before to avoid appending to previous results file
+        if output_file not in self.reports_per_file:
+            self.reports_per_file[output_file] = 0
+            maybe_rename_existing_file(output_file)
+        else:
+            self.reports_per_file[output_file] += 1
+
+        dataframe = multi_agent_stats_to_dataframe(stats)
+        if dataframe.empty:
+            return
+
+        # Keep column order stable across appends: a plain to_csv(mode="a")
+        # writes columns positionally, so if a later episode's dataframe has
+        # a different column order (or an agent's stats are momentarily
+        # missing a field) values would land under the wrong header.
+        if output_file.exists() and self.reports_per_file[output_file] >= 1:
+            existing_cols = pd.read_csv(output_file, nrows=0, index_col=0).columns
+            dataframe = dataframe.reindex(columns=existing_cols)
+
+        header = self.reports_per_file[output_file] < 1
+        dataframe.to_csv(output_file, mode="a", header=header)
 
     def close(self):
         pass

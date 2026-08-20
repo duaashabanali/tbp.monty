@@ -11,7 +11,7 @@ eval_env_interface_args:
     - banana
     - apple
     - dice
-    - rubics cube
+    - rubiks_cube
     - cracker_box
     - lego_duplo
   object_init_sampler:

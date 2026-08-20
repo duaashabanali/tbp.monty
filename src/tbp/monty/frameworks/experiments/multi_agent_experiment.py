@@ -14,7 +14,6 @@ from typing import Any
 
 import wandb
 import torch
-import pandas as pd
 
 from tbp.monty.context import RuntimeContext
 from tbp.monty.frameworks.actions.actions import Action
@@ -22,7 +21,21 @@ from tbp.monty.frameworks.experiments.mode import ExperimentMode
 from tbp.monty.frameworks.experiments.object_recognition_experiments import (
     MontyObjectRecognitionExperiment,
 )
+from tbp.monty.frameworks.loggers.exp_logger import LoggingCallbackHandler
+from tbp.monty.frameworks.loggers.multi_agent_loggers import (
+    MultiAgentBasicGraphMatchingLogger,
+    MultiAgentDetailedGraphMatchingLogger,
+)
 from tbp.monty.frameworks.utils.logging_utils import get_stats_per_lm
+
+# Multi-agent-aware replacements for the loggers in
+# MontyForGraphMatching.LOGGING_REGISTRY. Only BASIC and DETAILED are
+# covered -- SILENT logs nothing, and SELECTIVE is a niche
+# object-similarity-analysis logger not used by any multi-agent experiment.
+_MULTI_AGENT_LOGGER_REGISTRY = {
+    "BASIC": MultiAgentBasicGraphMatchingLogger,
+    "DETAILED": MultiAgentDetailedGraphMatchingLogger,
+}
 
 __all__ = ["MultiAgentMontyExperiment"]
 
@@ -86,6 +99,37 @@ class MultiAgentMontyExperiment(MontyObjectRecognitionExperiment):
         # Keep self.model pointing at agent 0 so that all parent-class code that
         # references self.model (loggers, counters, etc.) keeps working.
         self.model = self.monty_agents[0]
+
+    def init_monty_data_loggers(self, config: dict[str, Any]) -> None:
+        """Build data loggers, then swap in multi-agent-aware equivalents.
+
+        The parent implementation only knows about `self.model` (agent 0), so
+        after it builds the normal single-agent logger + handlers, we replace
+        the logger with one that gathers stats from every agent in
+        `self.monty_agents`, reusing the same handler instances (e.g.
+        MultiAgentCSVStatsHandler, DetailedJSONHandler) the parent already
+        constructed from the config.
+        """
+        super().init_monty_data_loggers(config)
+
+        multi_agent_logger_class = _MULTI_AGENT_LOGGER_REGISTRY.get(
+            self.monty_log_level
+        )
+        if multi_agent_logger_class is not None:
+            self.monty_logger = multi_agent_logger_class(
+                handlers=self.monty_logger.handlers, monty_agents=self.monty_agents
+            )
+            self.logger_handler = LoggingCallbackHandler(
+                self.monty_logger, self.model, output_dir=self.output_dir
+            )
+
+        # The parent implementation only flags self.model's (agent 0's)
+        # learning modules as detailed-logged; do the same for every other
+        # agent so their buffers behave consistently under DETAILED logging.
+        has_detailed_logger = self.monty_log_level == "DETAILED"
+        for agent in self.monty_agents[1:]:
+            for lm in agent.learning_modules:
+                lm.has_detailed_logger = has_detailed_logger
 
     # ------------------------------------------------------------------
     # Experiment mode propagation
@@ -167,53 +211,7 @@ class MultiAgentMontyExperiment(MontyObjectRecognitionExperiment):
             self.eval_episodes += 1
             self.total_eval_steps += steps
 
-        self._write_extra_agents_to_csv()
         self.env_interface.post_episode()
-
-    def _write_extra_agents_to_csv(self) -> None:
-        """Append per-episode stats for agents beyond agent 0 to eval/train_stats.csv.
-
-        Agent 0's row is written by the parent-class CSV handler (BasicCSVStatsHandler).
-        This method appends one additional row per LM per extra agent to the same file,
-        with lm_id set to 'agent_N_LM_0' so each row is uniquely identifiable.
-        """
-        if not hasattr(self, "monty_agents") or len(self.monty_agents) <= 1:
-            return
-        target = getattr(self.env_interface, "primary_target", None)
-        if target is None:
-            return
-        seed = self._rng_seed_history[-1] if self._rng_seed_history else self.config["seed"]
-        mode = self.experiment_mode
-        csv_path = self.output_dir / f"{mode}_stats.csv"
-
-        for agent_idx in range(1, len(self.monty_agents)):
-            agent = self.monty_agents[agent_idx]
-            try:
-                stats = get_stats_per_lm(agent, target, seed)
-            except Exception:
-                continue
-
-            # Build one row per LM, labelled agent_N_LM_0 etc.
-            rows = {}
-            for lm_key, lm_stats in stats.items():
-                if lm_key.startswith("LM_"):
-                    row_key = f"agent_{agent_idx}_{lm_key}"
-                    rows[row_key] = lm_stats
-
-            if not rows:
-                continue
-
-            df = pd.DataFrame.from_dict(rows, orient="index")
-            df["lm_id"] = df.index
-
-            # Reorder columns to match the existing CSV so values land in the
-            # right columns when appending without a header.
-            if csv_path.exists():
-                existing_cols = pd.read_csv(csv_path, nrows=0, index_col=0).columns.tolist()
-                df = df.reindex(columns=existing_cols)
-
-            header = not csv_path.exists()
-            df.to_csv(csv_path, mode="a", header=header)
 
     def _log_extra_agents_buffered(self) -> None:
         """Buffer per-episode metrics for agents beyond agent 0 into WandB.

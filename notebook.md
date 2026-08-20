@@ -1104,7 +1104,9 @@ FAILED tests/unit/frameworks/environments/habitat_data_test.py::HabitatDataTest:
 `HabitatEnvironment.__init__` was refactored to expect agents as a list, but the tests still pass a single AgentConfig.
 the fix is: - Fix environment.py at `/Users/duaaali/tbp/tbp.monty/src/tbp/monty/simulators/habitat` to accept both a single AgentConfig and a list (backward-compatible) [Lines 106–110]
 
-## Running the actual 2 agents experiment (two_agents_surf)
+## 2026Aug18
+
+### Running the actual 2 agents experiment (two_agents_surf)
 
 - type `python run.py experiment=two_agent_surf` in the terminal.
 - like all other TBP experiments, the conda env has to be activated
@@ -1116,3 +1118,44 @@ the fix is: - Fix environment.py at `/Users/duaaali/tbp/tbp.monty/src/tbp/monty/
 - 10 YCB objects (mug, bowl, potted_meat_can, spoon, strawberry, mustard_bottle, dice, golf_ball, c_lego_duplo, banana)
 
 - so the experiment runs infinitly, I used Ctrl+c to halt the run
+
+## Continuing the two_agent_surf experiment
+
+- python run.py experiment=two_agent_surf
+  it ran fine through episodes 1–6 (fork, knife, spoon, mug, banana, apple), each getting logged correctly, but crashed transitioning to episode 7 (the "rubics cube" object):
+
+```IndexError: list index out of range
+  File ".../simulators/habitat/simulator.py", line 255, in add_object
+    obj_handle = obj_mgr.get_template_handles(name)
+```
+
+This means Habitat's object template manager couldn't find any template matching the name "rubics cube" — likely a naming mismatch between the config's object list and the actual YCB asset names. Let me check what object names actually exist in your local YCB data.
+
+- the fix is `rubrics_cube` not `rubrics cube`
+
+## 2026Aug19
+
+### Creating a logger specifically for MultiAgent
+
+This current framework splits logging into two layers (documented right in the code): Loggers gather stats by calling get*stats_per_lm(model, ...) and own a self.data pool; Handlers (like BasicCSVStatsHandler) never see model at all — they only ever get handed whatever dict the Logger already built. So a Handler alone structurally can't pull multi-agent stats; only a Logger can, since only the Logger receives the model reference. That's exactly why the current \_write_extra_agents_to_csv bypasses the Handler/Logger pipeline entirely and pokes the CSV file directly — it's a workaround for that gap. There's also a second landmine: BasicCSVStatsHandler builds its dataframe with a filter that only keeps dict keys starting literally with "LM*" — so "agent_1_LM_0"-style keys would be silently dropped if fed through the existing handler unmodified.
+
+So a proper fix needs two new pieces working together:
+
+1. A multi-agent-aware Logger that calls get*stats_per_lm once per agent (not just agent 0) and stores every agent's every LM under one data pool, named consistently as agent*{i}_LM_{j} — this also fixes the LM_0-vs-agent_1_LM_0 naming asymmetry you found confusing earlier, since agent 0 gets the same explicit naming as the rest.
+2. A new MultiAgentCSVStatsHandler that reads that pool without the "LM\_"-only filter, so any number of agents × any number of LMs per agent lands in the CSV.
+
+created multi_agent_loggers.py
+add the multi-agent-aware dataframe helper to logging_utils.py, next to lm_stats_to_dataframe.
+add the MultiAgentCSVStatsHandler in monty_handlers.py.
+wire this into multi_agent_experiment.py — import the new loggers, override init_monty_data_loggers, and remove the old bolt-on CSV method.
+override init_monty_data_loggers right after setup_experiment/\_init_all_models, and remove the old CSV bolt-on.
+remove the old \_write_extra_agents_to_csv method and its call site.
+update the experiment config to use the new handler instead of BasicCSVStatsHandler.
+
+New/changed files:
+
+tbp.monty/src/tbp/monty/frameworks/loggers/multi*agent_loggers.py (new) — MultiAgentBasicGraphMatchingLogger and MultiAgentDetailedGraphMatchingLogger, which gather get_stats_per_lm from every agent in monty_agents (not just agent 0) and key them uniformly as agent*{i}_LM_{j}
+tbp.monty/src/tbp/monty/frameworks/utils/logging*utils.py — added multi_agent_stats_to_dataframe, a sibling to lm_stats_to_dataframe that matches agent*<i>_LM_<j> keys instead of just LM\_<j>
+tbp.monty/src/tbp/monty/frameworks/loggers/monty_handlers.py — added MultiAgentCSVStatsHandler
+tbp.monty/src/tbp/monty/frameworks/experiments/multi_agent_experiment.py — overrode init_monty_data_loggers to swap in the multi-agent logger; deleted the old \_write_extra_agents_to_csv bolt-on entirely
+tbp.monty/src/tbp/monty/conf/experiment/two_agent_surf.yaml — swapped BasicCSVStatsHandler → MultiAgentCSVStatsHandler

@@ -1,38 +1,99 @@
 # @package _global_
 
+# This experiment runs TWO independent Monty agents perceiving the same
+# Habitat scene at once -- the basis for the Theory of Mind work described in
+# MULTI_AGENT.md. Each agent has its own sensors, learning module, and motor
+# policy, and they share one environment, stepping together each episode.
+#
+# Unlike a single-agent experiment (see the tutorial config), this file is
+# self-contained rather than composed from /monty, /monty/motor_system_config,
+# /monty/learning_module, /monty/sensor_module, and /monty/connectivity
+# defaults -- those sub-configs hardcode single-agent sensor/agent names, so
+# each agent's full Monty setup is instead written out below, once per agent,
+# under `agent_monty_configs`.
+
 defaults:
-  - /env_interface: eval_distinctobj_random
+  # /env_interface specifies how to set up the environment for the experiment.
+  # We evaluate (no training) on 10 distinct objects, placed with random
+  # rotations, and both agents use a surface-following policy ("2surf").
+  - /env_interface: eval_distinctobj_random_2surf
+
+  # /logging specifies the logging configuration to use. We tell Monty to use
+  # the DETAILED data logging mode and Python to use the DEBUG log level, so
+  # we can inspect every step while debugging the two-agent setup.
   - /logging: detailed_debug_monty_runs
 
 experiment:
+  # The top-level _target_ is what kind of experiment we want to run.
+  # MultiAgentMontyExperiment steps a list of independent MontyBase instances
+  # (one per physical agent) against the same shared environment each episode.
   _target_: tbp.monty.frameworks.experiments.multi_agent_experiment.MultiAgentMontyExperiment
+  # config specifies the configuration of the experiment itself.
   config:
+    # `show_sensor_output: true` will display a live plot of each agent's
+    # `patch` sensor output.
     show_sensor_output: false
+    # The maximum number of steps to train for. Unused here since do_train
+    # is false.
     max_train_steps: 10
+    # The maximum number of steps to evaluate for, per episode.
     max_eval_steps: 2500
+    # The maximum number of steps to run for, across all agents combined.
     max_total_steps: 2500
+    # The number of epochs to train for. Unused here since do_train is false.
     n_train_epochs: 3
+    # The number of epochs to evaluate for. One epoch cycles through every
+    # object listed in the env_interface's `object_names`.
     n_eval_epochs: 10
     min_lms_match: 1
+    # The random seed for the experiment.
     seed: 42
+    # No learning modules are supervised here -- both agents load pretrained
+    # models instead (see `model_name_or_path` inside `agent_monty_configs`).
     supervised_lm_ids: []
+    # Unused at this top level; each agent specifies its own
+    # `model_name_or_path` inside `agent_monty_configs` below.
     model_name_or_path: null
     do_train: false
     do_eval: true
 
     logging:
+      # Every experiment has a unique run name. This is used to identify the
+      # experiment in the logs and to save trained models.
       run_name: two_agent_surf
+      # Override the /logging default's monty_handlers: swap
+      # BasicCSVStatsHandler (which only understands a single agent's LM_*
+      # stats) for MultiAgentCSVStatsHandler, which writes one row per
+      # (agent, learning module) -- required for this experiment's two
+      # agents to both show up in eval_stats.csv / train_stats.csv.
+      monty_handlers:
+        - ${monty.class:tbp.monty.frameworks.loggers.monty_handlers.MultiAgentCSVStatsHandler}
+        - ${monty.class:tbp.monty.frameworks.loggers.monty_handlers.DetailedJSONHandler}
 
+    # The Habitat environment shared by both agents: which object is placed
+    # in the scene, and the two physical agents (sensors + starting pose)
+    # that will look at it.
     environment:
       env_init_func: ${monty.class:tbp.monty.simulators.habitat.environment.HabitatEnvironment}
       env_init_args:
         scene_id: null
         seed: 42
         data_path: ${path.expanduser:${oc.env:MONTY_DATA}/habitat/objects/ycb}
+        # Initial object placed in the scene. The env_interface cycles
+        # through the full `object_names` list across episodes; this entry
+        # just seeds the very first one.
         objects:
           - name: mug
             position: [0.0, 1.5, 0.0]
+        # Two physical agents in one shared Habitat sim. Each is a
+        # MultiSensorAgent with a `patch` sensor (zoomed in, used for
+        # recognition) and a `view_finder` sensor (zoomed out, used only for
+        # visualization/positioning). Habitat scopes sensor names per
+        # physical agent, so both agents can safely reuse the same sensor
+        # names `patch`/`view_finder` -- this matters because the pretrained
+        # model checkpoints store graph features keyed by sensor name.
         agents:
+          # Agent 0, positioned in front of the object.
           - agent_type: ${monty.class:tbp.monty.simulators.habitat.MultiSensorAgent}
             agent_args:
               agent_id: agent_id_0
@@ -51,6 +112,9 @@ experiment:
               semantics: [false, false]
               zooms: [10.0, 1.0]
               action_space_type: surface_agent
+          # Agent 1 -- identical sensor setup to Agent 0, but positioned on
+          # the opposite side of the object so the two agents explore it
+          # from different starting points.
           - agent_type: ${monty.class:tbp.monty.simulators.habitat.MultiSensorAgent}
             agent_args:
               agent_id: agent_id_1
@@ -69,6 +133,10 @@ experiment:
               semantics: [false, false]
               zooms: [10.0, 1.0]
               action_space_type: surface_agent
+      # Transform pipeline that turns raw Habitat observations (depth,
+      # semantic masks) into 3D point-cloud locations before they reach
+      # Monty. Applied once per agent, since each agent's sensors are scoped
+      # separately.
       transform:
         # Agent 0 transforms
         - _target_: tbp.monty.frameworks.environment_utils.transforms.MissingToMaxDepth
@@ -103,23 +171,46 @@ experiment:
           depth_clip_sensors: [0]
           clip_value: 0.05
 
+    # Instead of a single `monty_config` (as in a single-agent experiment),
+    # MultiAgentMontyExperiment expects a *list* of monty configs, one per
+    # physical agent. Each entry below is a fully self-contained Monty --
+    # sensor modules + learning module + motor system, the same pieces the
+    # tutorial config composes from /monty defaults -- scoped to one physical
+    # agent via `sm_to_agent_dict` and the motor system's `agent_id`. Agent 0
+    # and Agent 1 are identical apart from which physical agent they're
+    # wired to.
     agent_monty_configs:
       # ------------------------------------------------------------------ Agent 0
+      # Path to the pretrained object model this agent's learning module
+      # loads at startup (both agents share the same pretrained checkpoint).
       - model_name_or_path: ${constants.pretrained_dir}/surf_agent_1lm_10distinctobj/pretrained/
         monty_config:
+          # MontyForEvidenceGraphMatching runs evidence-based graph matching
+          # (richer than the DisplacementGraphLM used in the single-agent
+          # tutorial).
           monty_class: ${monty.class:tbp.monty.frameworks.models.evidence_matching.model.MontyForEvidenceGraphMatching}
           monty_args:
             num_exploratory_steps: 1000
             min_eval_steps: ${constants.min_eval_steps}
             min_train_steps: 3
             max_total_steps: 2500
+          # Which physical agent's observations this Monty instance reads
+          # from the shared environment step each cycle -- must match
+          # `agent_id: agent_id_0` above.
           sm_to_agent_dict:
             patch: agent_id_0
             view_finder: agent_id_0
+          # Equivalent to /monty/connectivity: connects sensor module 0 to
+          # learning module 0 (single sensor -> single learning module, like
+          # the tutorial's 1lm_1sm connectivity).
           sm_to_lm_matrix:
             - - 0
           lm_to_lm_matrix: null
           lm_to_lm_vote_matrix: null
+          # Equivalent to /monty/sensor_module, inlined: a CameraSM reading
+          # the `patch` sensor (used for recognition, with feature/location
+          # noise applied) and a Probe reading the `view_finder` sensor
+          # (used only to save raw images, not for matching).
           sensor_module_configs:
             sensor_module_0:
               sensor_module_class: ${monty.class:tbp.monty.frameworks.models.sensor_modules.CameraSM}
@@ -152,6 +243,11 @@ experiment:
               sensor_module_args:
                 sensor_module_id: view_finder
                 save_raw_obs: true
+          # Equivalent to /monty/learning_module, inlined: a single
+          # EvidenceGraphLM that matches incoming features/poses against the
+          # pretrained object graphs and generates its own movement goals
+          # (`gsg`, the goal-state generator) to disambiguate between
+          # hypotheses.
           learning_module_configs:
             learning_module_0:
               learning_module_class: ${monty.class:tbp.monty.frameworks.models.evidence_matching.learning_module.EvidenceGraphLM}
@@ -181,6 +277,13 @@ experiment:
                   min_post_goal_success_steps: 5
                   x_percent_scale_factor: 0.75
                   desired_object_distance: 0.025
+          # Equivalent to /monty/motor_system_config, inlined: a
+          # SurfacePolicyCurvatureInformed policy that keeps the agent moving
+          # along the object's surface, using curvature to inform tangential
+          # movement (unlike the tutorial's simpler
+          # InformedPolicyRandomWalk, which is meant for a distant agent).
+          # `agent_id: agent_id_0` ties this policy to Agent 0's physical
+          # agent.
           motor_system_config:
             _target_: tbp.monty.frameworks.models.motor_system.MotorSystem
             policy_selector:
@@ -204,6 +307,13 @@ experiment:
                 min_heading_steps: 12
 
       # ------------------------------------------------------------------ Agent 1
+      # Mirrors Agent 0's configuration exactly -- same pretrained model,
+      # same sensor/learning-module/motor-policy setup. The only differences
+      # are `sm_to_agent_dict` and `motor_system_config.agent_id` below,
+      # which point this Monty instance at `agent_id_1` instead of
+      # `agent_id_0`. (Per MULTI_AGENT.md, only Agent 0's metrics currently
+      # reach the WandB/CSV logger -- Agent 1 runs and is checkpointed
+      # separately, but isn't logged per-step yet.)
       - model_name_or_path: ${constants.pretrained_dir}/surf_agent_1lm_10distinctobj/pretrained/
         monty_config:
           monty_class: ${monty.class:tbp.monty.frameworks.models.evidence_matching.model.MontyForEvidenceGraphMatching}
@@ -212,6 +322,7 @@ experiment:
             min_eval_steps: ${constants.min_eval_steps}
             min_train_steps: 3
             max_total_steps: 2500
+          # Reads agent_id_1's observations from the shared environment step.
           sm_to_agent_dict:
             patch: agent_id_1
             view_finder: agent_id_1
@@ -294,6 +405,7 @@ experiment:
                     - ${monty.class:tbp.monty.frameworks.actions.actions.OrientHorizontal}
                     - ${monty.class:tbp.monty.frameworks.actions.actions.OrientVertical}
                 use_goal_driven_actions: true
+                # Ties this policy to Agent 1's physical agent.
                 agent_id: agent_id_1
                 desired_object_distance: 0.025
                 alpha: 0.1

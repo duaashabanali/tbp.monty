@@ -13,6 +13,7 @@ from __future__ import annotations
 import copy
 import json
 import logging
+import re
 import shutil
 from collections import deque
 from itertools import chain
@@ -1000,6 +1001,43 @@ def lm_stats_to_dataframe(stats, format_for_wandb=False):
 
         if len(lm_dict) > 0:
             df_list.append(pd.DataFrame.from_dict(lm_dict, orient="index"))
+
+    big_df = pd.concat(df_list)
+    big_df["lm_id"] = big_df.index
+    return big_df
+
+
+_AGENT_LM_KEY_PATTERN = re.compile(r"^agent_\d+_LM_\d+$")
+
+
+def multi_agent_stats_to_dataframe(stats, format_for_wandb=False):
+    """Take in a multi-agent stats dictionary and format into a dataframe.
+
+    Like :func:`lm_stats_to_dataframe`, but for stats dictionaries populated
+    by the multi-agent loggers (see
+    ``tbp.monty.frameworks.loggers.multi_agent_loggers``), which key each
+    agent's learning modules as ``agent_<i>_LM_<j>`` rather than plain
+    ``LM_<j>``. Supports any number of agents, each with any number of
+    learning modules.
+
+    Returns:
+        dataframe, or an empty dataframe if no matching keys were found.
+    """
+    df_list = []
+    for episode in stats.values():
+        row_dict = {}
+        for key in episode:
+            if isinstance(key, str) and _AGENT_LM_KEY_PATTERN.match(key):
+                if format_for_wandb:
+                    row_dict[key] = format_columns_for_wandb(copy.deepcopy(episode[key]))
+                else:
+                    row_dict[key] = episode[key]
+
+        if len(row_dict) > 0:
+            df_list.append(pd.DataFrame.from_dict(row_dict, orient="index"))
+
+    if not df_list:
+        return pd.DataFrame()
 
     big_df = pd.concat(df_list)
     big_df["lm_id"] = big_df.index
