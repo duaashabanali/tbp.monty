@@ -1,0 +1,63 @@
+# @package _global_
+
+# Same as two_agent_surf.yaml, but the two agents also communicate via
+# cross-agent voting (Layer 3), implemented in
+# MultiAgentMontyExperiment._communicate_between_agents() -- see
+# tbp.monty.frameworks.experiments.multi_agent_experiment for how votes are
+# transformed between agents and MULTI_AGENT.md for background.
+
+defaults:
+  # ---------------------------------------------------------------- Agent 0
+  - /monty@experiment.config.agent_monty_configs.agent0.monty_config: evidencegraph_exp1000_emin_t3_tot2500
+  - /monty/sensor_module@experiment.config.agent_monty_configs.agent0.monty_config.sensor_module_configs: camera_surf_noise_raw1
+  - /monty/learning_module@experiment.config.agent_monty_configs.agent0.monty_config.learning_module_configs: two_surf_agents_evidence
+  - /monty/connectivity@experiment.config.agent_monty_configs.agent0.monty_config: 1lm_1sm
+
+  # ---------------------------------------------------------------- Agent 1
+  - /monty@experiment.config.agent_monty_configs.agent1.monty_config: evidencegraph_exp1000_emin_t3_tot2500
+  - /monty/sensor_module@experiment.config.agent_monty_configs.agent1.monty_config.sensor_module_configs: camera_surf_noise_raw1
+  - /monty/learning_module@experiment.config.agent_monty_configs.agent1.monty_config.learning_module_configs: two_surf_agents_evidence
+  - /monty/connectivity@experiment.config.agent_monty_configs.agent1.monty_config: 1lm_1sm_agent1
+
+  - /monty/motor_system_config: two_surf_agents
+  - /environment: two_surf_agents_habitat
+  - /env_interface: eval_distinctobj_random_2surf
+  - /logging: detailed_debug_monty_runs
+
+experiment:
+  _target_: tbp.monty.frameworks.experiments.multi_agent_experiment.MultiAgentMontyExperiment
+  config:
+    show_sensor_output: false
+    max_train_steps: 10
+    max_eval_steps: 2500
+    max_total_steps: 2500
+    n_train_epochs: 3
+    n_eval_epochs: 10
+    min_lms_match: 1
+    seed: 42
+    supervised_lm_ids: []
+    model_name_or_path: null
+    do_train: false
+    do_eval: true
+
+    agent_monty_configs:
+      agent0:
+        model_name_or_path: ${constants.pretrained_dir}/surf_agent_1lm_10distinctobj/pretrained/
+      agent1:
+        model_name_or_path: ${constants.pretrained_dir}/surf_agent_1lm_10distinctobj/pretrained/
+
+    # Bidirectional voting between the two agents' single LM each. To extend
+    # to N LMs per agent later, add one entry per (sender, receiver) pair you
+    # want connected -- e.g. agent0's lm 2 voting to agent1's lm 0 would just
+    # be another {sender: {agent: 0, lm: 2}, receiver: {agent: 1, lm: 0}}.
+    cross_agent_vote_matrix:
+      - sender: { agent: 0, lm: 0 }
+        receiver: { agent: 1, lm: 0 }
+      - sender: { agent: 1, lm: 0 }
+        receiver: { agent: 0, lm: 0 }
+
+    logging:
+      run_name: two_agent_surf_voting
+      monty_handlers:
+        - ${monty.class:tbp.monty.frameworks.loggers.monty_handlers.MultiAgentCSVStatsHandler}
+        - ${monty.class:tbp.monty.frameworks.loggers.monty_handlers.DetailedJSONHandler}

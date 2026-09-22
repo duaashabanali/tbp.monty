@@ -104,14 +104,14 @@ class MultiAgentBasicGraphMatchingLogger(BasicGraphMatchingLogger):
 
 
 class MultiAgentDetailedGraphMatchingLogger(DetailedGraphMatchingLogger):
-    """DetailedGraphMatchingLogger that gathers BASIC stats from every agent.
+    """DetailedGraphMatchingLogger that gathers stats from every agent.
 
-    The DETAILED portion (per-step buffers dumped to JSON) is copied from
-    ``DetailedGraphMatchingLogger.update_episode_data`` essentially unchanged
-    and is still scoped to ``model`` (agent 0) only -- the base class already
-    flags that buffer path as not yet supporting multiple, independent
-    sensor agents. Only the BASIC portion (what ends up in the CSV) is made
-    multi-agent aware here.
+    Both the BASIC portion (what ends up in the CSV) and the DETAILED
+    portion (per-step buffers dumped to JSON) are gathered from every agent
+    in ``monty_agents``, keying each agent's learning modules, sensor
+    modules, and motor system as ``agent_<i>_...`` -- the same
+    ``agent_<i>_LM_<j>`` naming ``_populate_multi_agent_basic_data`` already
+    uses for the CSV.
     """
 
     def __init__(self, handlers, monty_agents: list[Any]) -> None:
@@ -126,31 +126,31 @@ class MultiAgentDetailedGraphMatchingLogger(DetailedGraphMatchingLogger):
         self.eval_episodes_to_total[logger_args["eval_episodes"]] = episodes
 
         buffer_data = {}
-        for i, lm in enumerate(model.learning_modules):
-            lm_dict = {}
-            lm_dict.update(logger_args)
-            lm_dict.update({"locations": lm.buffer.locations})
-            lm_dict.update(lm.buffer.features)
-            lm_dict.update({"displacements": lm.buffer.displacements})
-            lm_dict.update(lm.buffer.stats)
-            lm_dict.update(mode=model.experiment_mode.value)
-            lm_dict.update({"stepwise_targets_list": lm.stepwise_targets_list})
-            buffer_data[f"LM_{i}"] = lm_dict  # NOTE: probably same for all LMs
+        for agent_idx, agent in enumerate(self._agents):
+            for i, lm in enumerate(agent.learning_modules):
+                lm_dict = {}
+                lm_dict.update(logger_args)
+                lm_dict.update({"locations": lm.buffer.locations})
+                lm_dict.update(lm.buffer.features)
+                lm_dict.update({"displacements": lm.buffer.displacements})
+                lm_dict.update(lm.buffer.stats)
+                lm_dict.update(mode=agent.experiment_mode.value)
+                lm_dict.update({"stepwise_targets_list": lm.stepwise_targets_list})
+                # NOTE: probably same for all LMs of a given agent
+                buffer_data[f"agent_{agent_idx}_LM_{i}"] = lm_dict
 
-        for i, sm in enumerate(model.sensor_modules):
-            if len(sm.state_dict()["raw_observations"]) > 0:
-                buffer_data[f"SM_{i}"] = sm.state_dict()
+            for i, sm in enumerate(agent.sensor_modules):
+                if len(sm.state_dict()["raw_observations"]) > 0:
+                    buffer_data[f"agent_{agent_idx}_SM_{i}"] = sm.state_dict()
 
-        # TODO ensure will work with multiple, independent sensor agents
-        buffer_data["motor_system"] = {}
-        buffer_data["motor_system"]["action_sequence"] = (
-            model.motor_system.action_sequence
-        )
-        buffer_data["motor_system"]["action_details"] = dict(
-            model.motor_system._telemetry_surface_action_details.__dict__
-        )
-        buffer_data["motor_system"]["policy_selector"] = {
-            "selected_goals": model.motor_system._policy_selector._selected_goals,
-        }
+            motor_system_dict = {}
+            motor_system_dict["action_sequence"] = agent.motor_system.action_sequence
+            motor_system_dict["action_details"] = dict(
+                agent.motor_system._telemetry_surface_action_details.__dict__
+            )
+            motor_system_dict["policy_selector"] = {
+                "selected_goals": agent.motor_system._policy_selector._selected_goals,
+            }
+            buffer_data[f"agent_{agent_idx}_motor_system"] = motor_system_dict
 
         self.data["DETAILED"][episodes] = buffer_data

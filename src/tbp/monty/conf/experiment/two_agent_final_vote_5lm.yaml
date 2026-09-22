@@ -1,0 +1,91 @@
+# @package _global_
+
+# Two independent distant agents, each with 5 learning modules voting
+# laterally with each other within the agent (see
+# monty/connectivity/5lm_5sm.yaml/5lm_5sm_agent1.yaml) -- but unlike
+# two_agent_voting_5lm.yaml, the two agents get ZERO cross-agent influence
+# while running. Each agent explores and converges completely independently
+# (its 5 LMs only ever vote with each other). The only cross-agent exchange
+# happens once each agent finishes: MultiAgentMontyExperiment._share_final_vote()
+# records that agent's {object, confidence} the moment it's done (confidence =
+# max evidence for the current most-likely-hypothesis across that agent's own
+# 5 LMs, since Monty has no existing notion of one combined confidence for an
+# agent -- see _share_final_vote()'s docstring). Once both agents have
+# finished, the joint decision is the shared object if they agree, or the
+# higher-confidence agent's object if they don't.
+#
+# Otherwise identical to two_agent_voting_5lm.yaml: same environment, sensor
+# modules, learning modules, connectivity, motor config, and pretrained
+# checkpoint (supervised_pre_training_5lms).
+
+defaults:
+  # ---------------------------------------------------------------- Agent 0
+  # All four of these are the exact single-agent 5-LM tutorial's own files,
+  # reused unchanged.
+  - /monty@experiment.config.agent_monty_configs.agent0.monty_config: evidencegraph_exp1000_emin_t3_tot2500
+  - /monty/sensor_module@experiment.config.agent_monty_configs.agent0.monty_config.sensor_module_configs: 5sm_camera_dist_noise
+  - /monty/learning_module@experiment.config.agent_monty_configs.agent0.monty_config.learning_module_configs: evidence_5lm_nn10_dod003
+  - /monty/connectivity@experiment.config.agent_monty_configs.agent0.monty_config: 5lm_5sm
+
+  # ---------------------------------------------------------------- Agent 1
+  # /monty, /monty/sensor_module, and /monty/learning_module reuse the exact
+  # same files as Agent 0, since those pieces are configured identically for
+  # both agents; /monty/connectivity uses an Agent-1-specific variant
+  # (`agent_id_1`).
+  - /monty@experiment.config.agent_monty_configs.agent1.monty_config: evidencegraph_exp1000_emin_t3_tot2500
+  - /monty/sensor_module@experiment.config.agent_monty_configs.agent1.monty_config.sensor_module_configs: 5sm_camera_dist_noise
+  - /monty/learning_module@experiment.config.agent_monty_configs.agent1.monty_config.learning_module_configs: evidence_5lm_nn10_dod003
+  - /monty/connectivity@experiment.config.agent_monty_configs.agent1.monty_config: 5lm_5sm_agent1
+
+  # /monty/motor_system_config supplies the motor policy for BOTH agents in
+  # one file -- its own content already has `agent0`/`agent1` keys, so no
+  # @-rename is needed here.
+  - /monty/motor_system_config: two_dist_agents_5lm
+
+  # /environment specifies the shared Habitat scene: the object placed in it,
+  # both physical agents (5 sensor patches + view_finder each), and their
+  # transforms.
+  - /environment: two_dist_agents_5lm_habitat
+
+  # /env_interface evaluates (no training) on the same 10 distinct objects
+  # the single-agent 5-LM tutorial uses, placed with random rotations.
+  - /env_interface: eval_distinctobj_random
+  - /env_interface/positioning_procedures_eval: getgoodview_viewfinder_patch0_two_agents
+
+  - /logging: detailed_debug_monty_runs
+
+experiment:
+  _target_: tbp.monty.frameworks.experiments.multi_agent_experiment.MultiAgentMontyExperiment
+  config:
+    show_sensor_output: false
+    max_train_steps: 1000
+    max_eval_steps: 500
+    max_total_steps: 6000
+    n_train_epochs: 3
+    n_eval_epochs: 10
+    # Match the single-agent 5-LM tutorial's threshold: at least 3 of the 5
+    # LMs (within an agent) must agree for a match to be accepted.
+    min_lms_match: 3
+    seed: 42
+    supervised_lm_ids: []
+    model_name_or_path: null
+    do_train: false
+    do_eval: true
+
+    agent_monty_configs:
+      agent0:
+        # Both agents load the existing 5-LM pretrained checkpoint -- same
+        # model, viewed from two different physical vantage points.
+        model_name_or_path: ${constants.pretrained_dir}/supervised_pre_training_5lms/pretrained/
+      agent1:
+        model_name_or_path: ${constants.pretrained_dir}/supervised_pre_training_5lms/pretrained/
+
+    # No cross_agent_vote_matrix here -- deliberately absent, so agents get
+    # zero per-step cross-agent influence. Only the final decision is shared.
+    share_final_vote: true
+
+    logging:
+      run_name: two_agent_final_vote_5lm
+      monty_handlers:
+        - ${monty.class:tbp.monty.frameworks.loggers.monty_handlers.MultiAgentCSVStatsHandler}
+        - ${monty.class:tbp.monty.frameworks.loggers.monty_handlers.DetailedJSONHandler}

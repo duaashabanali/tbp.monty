@@ -9,6 +9,8 @@
 from __future__ import annotations
 
 import logging
+import copy
+import numpy as np
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +29,9 @@ from tbp.monty.frameworks.loggers.multi_agent_loggers import (
     MultiAgentDetailedGraphMatchingLogger,
 )
 from tbp.monty.frameworks.utils.logging_utils import get_stats_per_lm
+from tbp.monty.frameworks.utils.spatial_arithmetics import (
+    align_orthonormal_vectors,
+)
 
 # Multi-agent-aware replacements for the loggers in
 # MontyForGraphMatching.LOGGING_REGISTRY. Only BASIC and DETAILED are
@@ -36,7 +41,48 @@ _MULTI_AGENT_LOGGER_REGISTRY = {
     "BASIC": MultiAgentBasicGraphMatchingLogger,
     "DETAILED": MultiAgentDetailedGraphMatchingLogger,
 }
+def _merge_vote_into(
+    merged: dict[str, list[Any]],
+    sender_vote: dict[str, Any],
+    receiver_pose: np.ndarray,
+) -> None:
+    """Transform one sender's vote into the receiver's reference frame.
 
+    Mirrors MontyForEvidenceGraphMatching._combine_votes()'s per-(sender,
+    receiver) transform exactly, merging the result into `merged` (a
+    dict[graph_id, list[Message]]) in place. Works unmodified across
+    different agents (not just LMs on one body) because each agent's
+    DepthTo3DLocations transform already bakes that agent's own absolute
+    world pose into every sensed location/orientation before Monty ever
+    sees it -- so two agents' `sensed_pose_rel_body` values are already in
+    the same shared world frame.
+
+    Args:
+        merged: Accumulator of already-transformed votes for one receiving
+            learning module, keyed by graph_id. Updated in place.
+        sender_vote: One learning module's send_out_vote() output.
+        receiver_pose: The receiving learning module's own
+            `sensed_pose_rel_body`, shape (4, 3).
+    """
+    sender_pose = sender_vote["sensed_pose_rel_body"]
+    sensor_disp = np.array(receiver_pose[0]) - np.array(sender_pose[0])
+    sensor_rotation_disp, _ = align_orthonormal_vectors(
+        sender_pose[1:],
+        receiver_pose[1:],
+        as_scipy=False,
+    )
+    for graph_id, states in sender_vote["possible_states"].items():
+        transformed = []
+        for state in states:
+            new_state = copy.deepcopy(state)
+            rotated_displacement = new_state.get_pose_vectors().dot(sensor_disp)
+            new_state.transform_morphological_features(
+                translation=rotated_displacement,
+                rotation=sensor_rotation_disp,
+            )
+            transformed.append(new_state)
+        merged.setdefault(graph_id, []).extend(transformed)
+        
 __all__ = ["MultiAgentMontyExperiment"]
 
 logger = logging.getLogger(__name__)
@@ -49,13 +95,42 @@ class MultiAgentMontyExperiment(MontyObjectRecognitionExperiment):
     They share one environment and step simultaneously each episode.
 
     Config additions vs MontyObjectRecognitionExperiment:
-        agent_monty_configs (list[dict]): One entry per agent. Each entry must contain:
+        agent_monty_configs (dict[str, dict]): One entry per agent, keyed by an
+            arbitrary agent name (e.g. "agent0"). Each entry must contain:
             - monty_config (dict): The same structure as the single-agent monty_config.
             - model_name_or_path (str | None): Optional checkpoint for this agent.
 
-    The key extension point for inter-agent communication is
-    ``_communicate_between_agents()``. Override it in a subclass to implement
-    Layer 3 (message passing between Monty instances).
+        cross_agent_vote_matrix (list[dict] | None): Optional. One entry per
+            sender-to-receiver cross-agent vote link:
+                - sender: {agent: <index into agent_monty_configs>,
+                           lm: <index into that agent's learning_modules>}
+                - receiver: same shape as sender.
+            Links are directional -- for bidirectional voting between two
+            LMs, list both directions explicitly. `None` or an empty list
+            (the default) disables cross-agent voting, same convention as
+            `lm_to_lm_vote_matrix`: no entry means no voting.
+
+        share_final_vote (bool): Optional, default False. If True, each
+            agent runs to its own independent conclusion (no per-step
+            cross-agent influence -- orthogonal to, and can be used
+            instead of or alongside, `cross_agent_vote_matrix`), and the
+            moment each agent finishes, its final decision is recorded:
+            whichever of its own learning modules currently has the
+            highest evidence for its most-likely hypothesis, taken as that
+            agent's {object, confidence}. Once every agent has finished,
+            the joint decision is the shared object if all agents agree,
+            or the object of whichever agent had the higher confidence if
+            they disagree. See `_share_final_vote()`.
+
+    Cross-agent voting (Layer 3) is implemented in
+    ``_communicate_between_agents()`` below, reusing the same
+    sender/receiver transform MontyForEvidenceGraphMatching._combine_votes()
+    already implements within one agent. Voting only happens between LMs
+    whose owning agent is currently in a "matching_step" -- exploratory
+    steps are skipped, exactly as MontyForGraphMatching._vote() only runs
+    from _matching_step(), never _exploratory_step(). This matters once
+    agents can be mid-training and on different step schedules from each
+    other, or have multiple LMs each.
     """
 
     def __init__(self, config) -> None:
@@ -63,14 +138,16 @@ class MultiAgentMontyExperiment(MontyObjectRecognitionExperiment):
         # supervised_lm_ids="all". With multiple agents we don't have a single
         # monty_config, so we resolve it from the first agent's config instead.
         if config.get("supervised_lm_ids") == "all":
-            first_agent_cfg = config["agent_monty_configs"][0]
+            first_agent_cfg = next(iter(config["agent_monty_configs"].values()))
             config["supervised_lm_ids"] = list(
                 first_agent_cfg["monty_config"]["learning_module_configs"].keys()
             )
         # Inject a dummy monty_config so the parent __init__ doesn't KeyError.
         # We replace self.model in setup_experiment before it is used.
         if "monty_config" not in config:
-            config["monty_config"] = config["agent_monty_configs"][0]["monty_config"]
+            config["monty_config"] = next(
+                iter(config["agent_monty_configs"].values())
+            )["monty_config"]
         super().__init__(config)
 
     # ------------------------------------------------------------------
@@ -88,7 +165,7 @@ class MultiAgentMontyExperiment(MontyObjectRecognitionExperiment):
     def _init_all_models(self, config: dict[str, Any]) -> None:
         """Build one MontyBase instance per agent config."""
         self.monty_agents = []
-        for agent_cfg in config["agent_monty_configs"]:
+        for agent_cfg in config["agent_monty_configs"].values():
             model_path = agent_cfg.get("model_name_or_path")
             model = self.init_model(
                 monty_config=agent_cfg["monty_config"],
@@ -136,64 +213,41 @@ class MultiAgentMontyExperiment(MontyObjectRecognitionExperiment):
     # ------------------------------------------------------------------
 
     def train(self) -> None:
-        logger.info(f"running {self.n_train_epochs} train epochs")
-        self.experiment_mode = ExperimentMode.TRAIN
-        self.logger_handler.pre_train(self.logger_args)
-        for agent in self.monty_agents:
+        # super().train() sets agent 0 (== self.model)'s mode via the base
+        # class; only the extra agents need to be set here.
+        for agent in self.monty_agents[1:]:
             agent.set_experiment_mode(ExperimentMode.TRAIN)
-        for _ in range(self.n_train_epochs):
-            self.run_epoch()
-        self.logger_handler.post_train(self.logger_args)
+        super().train()
 
     def evaluate(self) -> None:
-        logger.info(f"running {self.n_eval_epochs} eval epochs")
-        self.experiment_mode = ExperimentMode.EVAL
-        self.logger_handler.pre_eval(self.logger_args)
-        for agent in self.monty_agents:
+        # super().evaluate() sets agent 0 (== self.model)'s mode via the base
+        # class; only the extra agents need to be set here.
+        for agent in self.monty_agents[1:]:
             agent.set_experiment_mode(ExperimentMode.EVAL)
-        for _ in range(self.n_eval_epochs):
-            self.run_epoch()
-        self.logger_handler.post_eval(self.logger_args)
+        super().evaluate()
 
     # ------------------------------------------------------------------
     # Episode lifecycle
     # ------------------------------------------------------------------
 
     def pre_episode(self) -> None:
-        if self.experiment_mode is ExperimentMode.TRAIN:
-            logger.info(
-                f"running train epoch {self.train_epochs} "
-                f"train episode {self.train_episodes}"
-            )
+        # super().pre_episode() handles agent 0 (== self.model): RNG reset,
+        # env/logger setup, and its own pre_episode(target, ...) call. Only
+        # the extra agents need to be stepped through pre_episode here.
+        super().pre_episode()
+
+        # Reset final-vote tracking (see _share_final_vote()) for the new
+        # episode, regardless of whether share_final_vote is enabled.
+        self._final_votes: dict[int, dict[str, Any]] = {}
+        self._joint_decision_logged = False
+
+        target = self.env_interface.primary_target
+        if hasattr(self.env_interface, "semantic_id_to_label"):
+            for agent in self.monty_agents[1:]:
+                agent.pre_episode(target, self.env_interface.semantic_id_to_label)
         else:
-            logger.info(
-                f"running eval epoch {self.eval_epochs} "
-                f"eval episode {self.eval_episodes}"
-            )
-
-        self.reset_episode_rng()
-
-        for agent in self.monty_agents:
-            if hasattr(self.env_interface, "semantic_id_to_label"):
-                agent.pre_episode(
-                    self.env_interface.primary_target,
-                    self.env_interface.semantic_id_to_label,
-                )
-            else:
-                agent.pre_episode(self.env_interface.primary_target)
-
-        self.env_interface.pre_episode(self.rng)
-
-        self.max_steps = (
-            self.max_train_steps
-            if self.experiment_mode is ExperimentMode.TRAIN
-            else self.max_eval_steps
-        )
-
-        self.logger_handler.pre_episode(self.logger_args)
-
-        if self.show_sensor_output:
-            self.live_plotter.initialize_online_plotting()
+            for agent in self.monty_agents[1:]:
+                agent.pre_episode(target)
 
     def post_episode(self, steps: int) -> None:
         # Buffer extra-agent metrics before the main logger commits so they land
@@ -313,7 +367,8 @@ class MultiAgentMontyExperiment(MontyObjectRecognitionExperiment):
                         agent.set_done()
                 return step
 
-            # Inter-agent communication — override this method for Layer 3
+            # Inter-agent communication (Layer 3) — no-op unless
+            # cross_agent_vote_matrix is set in config.
             self._communicate_between_agents()
 
             # Episode ends when every agent has converged
@@ -323,20 +378,120 @@ class MultiAgentMontyExperiment(MontyObjectRecognitionExperiment):
             step += 1
 
     def _communicate_between_agents(self) -> None:
-        """Hook for inter-agent communication (Layer 3).
+        """Cross-agent voting (Layer 3), and/or final-vote reconciliation.
 
-        Called once per step, after all agents have stepped but before the next
-        environment step. Override this in a subclass to implement message
-        passing between Monty instances.
-
-        Example pattern::
-
-            messages = [agent.send_agent_message() for agent in self.monty_agents]
-            for i, agent in enumerate(self.monty_agents):
-                others = [m for j, m in enumerate(messages) if j != i]
-                agent.receive_agent_message(others)
+        Called once per step, after all agents have stepped but before the
+        next environment step. Each piece no-ops unless its own config key
+        is set, and the two are independent of each other.
         """
-        pass
+        self._vote_cross_agent()
+        if self.config.get("share_final_vote"):
+            self._share_final_vote()
+
+    def _vote_cross_agent(self) -> None:
+        """Cross-agent voting (Layer 3).
+
+        No-ops if `cross_agent_vote_matrix` isn't set.
+        """
+        vote_links = self.config.get("cross_agent_vote_matrix")
+        if not vote_links:
+            return
+
+        participants = set()
+        for link in vote_links:
+            participants.add((link["sender"]["agent"], link["sender"]["lm"]))
+            participants.add((link["receiver"]["agent"], link["receiver"]["lm"]))
+
+        # Ask every participating LM for its outgoing vote once. An LM's own
+        # vote payload doubles as its current sensed pose, used below as the
+        # reference frame for any votes IT receives -- so an LM that isn't
+        # in a matching step, or has nothing new to report this step,
+        # participates as neither a sender nor a receiver.
+        votes: dict[tuple[int, int], dict[str, Any] | None] = {}
+        for agent_idx, lm_idx in participants:
+            agent = self.monty_agents[agent_idx]
+            if agent.step_type != "matching_step":
+                votes[(agent_idx, lm_idx)] = None
+                continue
+            votes[(agent_idx, lm_idx)] = agent.learning_modules[
+                lm_idx
+            ].send_out_vote()
+
+        combined_by_receiver: dict[tuple[int, int], dict[str, list[Any]]] = {}
+        for link in vote_links:
+            sender = (link["sender"]["agent"], link["sender"]["lm"])
+            receiver = (link["receiver"]["agent"], link["receiver"]["lm"])
+            sender_vote = votes[sender]
+            receiver_vote = votes[receiver]
+            if sender_vote is None or receiver_vote is None:
+                continue
+            merged = combined_by_receiver.setdefault(receiver, {})
+            _merge_vote_into(
+                merged, sender_vote, receiver_vote["sensed_pose_rel_body"]
+            )
+
+        for (agent_idx, lm_idx), combined in combined_by_receiver.items():
+            agent = self.monty_agents[agent_idx]
+            lm = agent.learning_modules[lm_idx]
+            lm.receive_votes(combined)
+            agent.update_stats_after_vote(lm)
+
+    def _share_final_vote(self) -> None:
+        """Record each agent's final decision the moment it finishes.
+
+        Reconciles into one joint decision once every agent has finished.
+        Unlike `_vote_cross_agent()`, agents get zero cross-agent influence
+        while they're still running -- each one's learning modules only
+        ever vote with each other (intra-agent, via that agent's own
+        `lm_to_lm_vote_matrix`). Only once an agent is fully done (`is_done`)
+        is its result captured, using whichever of its own learning modules
+        currently has the highest evidence for its most-likely hypothesis
+        as that agent's {object, confidence} -- there's no existing
+        Monty-level notion of "this agent's overall confidence" to reuse
+        (`min_lms_match` is a pure count of independently-converged LMs, not
+        an evidence comparison), so this picks the single strongest signal
+        among the agent's LMs rather than e.g. averaging across them.
+
+        Once every agent has a recorded vote: if they agree, that object is
+        the joint decision; if they disagree, the higher-confidence agent's
+        object wins. Stored on `self.joint_decision` and logged once per
+        episode.
+        """
+        for agent_idx, agent in enumerate(self.monty_agents):
+            if agent_idx in self._final_votes or not agent.is_done:
+                continue
+            best_object = None
+            best_confidence = None
+            for lm in agent.learning_modules:
+                mlh = lm.get_current_mlh()
+                if best_confidence is None or mlh["evidence"] > best_confidence:
+                    best_confidence = mlh["evidence"]
+                    best_object = mlh["graph_id"]
+            self._final_votes[agent_idx] = {
+                "object": best_object,
+                "confidence": best_confidence,
+            }
+            logger.info(
+                f"Agent {agent_idx} final vote: {best_object!r} "
+                f"(confidence {best_confidence:.3f})"
+            )
+
+        if self._joint_decision_logged or len(self._final_votes) < len(
+            self.monty_agents
+        ):
+            return
+
+        votes = list(self._final_votes.values())
+        objects = {v["object"] for v in votes}
+        agreed = len(objects) == 1
+        self.joint_decision = votes[0] if agreed else max(
+            votes, key=lambda v: v["confidence"]
+        )
+        logger.info(
+            f"Joint decision: {self.joint_decision['object']!r} "
+            f"(agreed={agreed}, votes={self._final_votes})"
+        )
+        self._joint_decision_logged = True
 
     # ------------------------------------------------------------------
     # Persistence

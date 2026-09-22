@@ -1,0 +1,63 @@
+# @package experiment.config.agent_monty_configs
+
+# Motor system config for both agents in the two-agent surf experiment, in
+# one file. A SurfacePolicyCurvatureInformed policy that keeps the agent
+# moving along the object's surface, using curvature to inform tangential
+# movement (unlike the tutorial's simpler InformedPolicyRandomWalk, which is
+# meant for a distant agent). Agent 0 and Agent 1 are identical except for
+# the policy's `agent_id`.
+#
+# Written with the agent0/agent1 keys explicit in this file's own content
+# (rather than via @-rename in the defaults list, one entry per agent) so
+# both agents' motor policies live in a single file. This merges fine
+# alongside the other /monty/... defaults, which use @-rename to reach the
+# same agent0/agent1.monty_config dicts for their own keys (sensor modules,
+# learning module, connectivity) -- Hydra just merges everything into the
+# same tree regardless of how each piece's package was specified.
+agent0:
+  monty_config:
+    motor_system_config:
+      _target_: tbp.monty.frameworks.models.motor_system.MotorSystem
+      policy_selector:
+        _target_: tbp.monty.frameworks.models.motor_policy_selectors.SinglePolicySelector
+        policy:
+          _target_: tbp.monty.frameworks.models.motor_policies.SurfacePolicyCurvatureInformed
+          action_sampler:
+            _target_: tbp.monty.frameworks.actions.action_samplers.ConstantSampler
+            actions:
+              - ${monty.class:tbp.monty.frameworks.actions.actions.MoveForward}
+              - ${monty.class:tbp.monty.frameworks.actions.actions.MoveTangentially}
+              - ${monty.class:tbp.monty.frameworks.actions.actions.OrientHorizontal}
+              - ${monty.class:tbp.monty.frameworks.actions.actions.OrientVertical}
+          use_goal_driven_actions: true
+          agent_id: agent_id_0
+          desired_object_distance: 0.025
+          alpha: 0.1
+          pc_alpha: 0.5
+          max_pc_bias_steps: 32
+          min_general_steps: 8
+          min_heading_steps: 12
+
+agent1:
+  monty_config:
+    motor_system_config:
+      _target_: tbp.monty.frameworks.models.motor_system.MotorSystem
+      policy_selector:
+        _target_: tbp.monty.frameworks.models.motor_policy_selectors.SinglePolicySelector
+        policy:
+          _target_: tbp.monty.frameworks.models.motor_policies.SurfacePolicyCurvatureInformed
+          action_sampler:
+            _target_: tbp.monty.frameworks.actions.action_samplers.ConstantSampler
+            actions:
+              - ${monty.class:tbp.monty.frameworks.actions.actions.MoveForward}
+              - ${monty.class:tbp.monty.frameworks.actions.actions.MoveTangentially}
+              - ${monty.class:tbp.monty.frameworks.actions.actions.OrientHorizontal}
+              - ${monty.class:tbp.monty.frameworks.actions.actions.OrientVertical}
+          use_goal_driven_actions: true
+          agent_id: agent_id_1
+          desired_object_distance: 0.025
+          alpha: 0.1
+          pc_alpha: 0.5
+          max_pc_bias_steps: 32
+          min_general_steps: 8
+          min_heading_steps: 12

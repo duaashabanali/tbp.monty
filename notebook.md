@@ -1159,3 +1159,201 @@ tbp.monty/src/tbp/monty/frameworks/utils/logging*utils.py — added multi_agent_
 tbp.monty/src/tbp/monty/frameworks/loggers/monty_handlers.py — added MultiAgentCSVStatsHandler
 tbp.monty/src/tbp/monty/frameworks/experiments/multi_agent_experiment.py — overrode init_monty_data_loggers to swap in the multi-agent logger; deleted the old \_write_extra_agents_to_csv bolt-on entirely
 tbp.monty/src/tbp/monty/conf/experiment/two_agent_surf.yaml — swapped BasicCSVStatsHandler → MultiAgentCSVStatsHandler
+
+---
+
+## 2026Aug25
+
+### Working on implementing layer 3 of the multiple agents part - Communication between agents
+
+- fisrt lets see how voting happens:
+- Each LM calls send_out_vote() → returns a dict of pose_hypotheses, pose_evidence (scaled to [-1, 1]), keyed by graph_id.
+- \_combine_votes() merges votes from whichever LMs lm_to_lm_vote_matrix says should talk to each other.
+- Each LM calls receive_votes(vote_data) → nudges its own evidence for each graph_id up or down based on what the others believe.
+
+This runs every "matching step," right after each LM updates from its own sensor input, inside \_matching_step() (abstract_monty_classes.py:86)
+
+Will use the same steps and methods to implement the multi agent communication using the `_communicate_between_agents()`
+
+#### Running a simulation where 2 agents each with one LM communicates together
+
+- created `two_agent_voting.yaml` under `tbp/tbp.monty/src/tbp/monty/conf/experiment/multi_agents/two_agent_voting.yaml`
+
+## 2026Sep4
+
+organizing the `two_agents_surf.yaml file`. The neat structure:
+Two new files replace the two big inline blocks in two_agent_surf.yaml:
+
+1. monty/agent_monty_configs/two_surf_agents_evidence.yaml — package experiment.config, holds the whole agent_monty_configs list. Since Agent 0 and Agent 1 are identical except sm_to_agent_dict and motor_system_config.policy.agent_id, use a YAML anchor + merge key to write the shared part once:
+
+````python
+# @package experiment.config
+
+# Anchor must appear before it's referenced below (YAML parses top-to-bottom).
+_shared_monty_base: &shared_monty_base
+  monty_class: ${monty.class:tbp.monty.frameworks.models.evidence_matching.model.MontyForEvidenceGraphMatching}
+  monty_args:
+    num_exploratory_steps: 1000
+    min_eval_steps: ${constants.min_eval_steps}
+    min_train_steps: 3
+    max_total_steps: 2500
+  sm_to_lm_matrix:
+    - - 0
+  lm_to_lm_matrix: null
+  lm_to_lm_vote_matrix: null
+  sensor_module_configs:
+    # ... identical to camera_surf_noise_raw1.yaml's content
+  learning_module_configs:
+    # ... the burst-sampling evidence LM block
+
+agent_monty_configs:
+  - model_name_or_path: ${constants.pretrained_dir}/surf_agent_1lm_10distinctobj/pretrained/
+    monty_config:
+      <<: *shared_monty_base
+      sm_to_agent_dict:
+        patch: agent_id_0
+        view_finder: agent_id_0
+      motor_system_config:
+        # ... SurfacePolicyCurvatureInformed, agent_id: agent_id_0
+  - model_name_or_path: ${constants.pretrained_dir}/surf_agent_1lm_10distinctobj/pretrained/
+    monty_config:
+      <<: *shared_monty_base
+      sm_to_agent_dict:
+        patch: agent_id_1
+        view_finder: agent_id_1
+      motor_system_config:
+        # ... same policy block, agent_id: agent_id_1
+        ```
+  2. environment/two_surf_agents_habitat.yaml — package experiment.config.environment, same trick for the two physical Habitat agents (anchor the shared sensor rig — resolutions, positions offsets, rotations, semantics, zooms, action_space_type — vary only agent_id and world position), and for the two-item transform: list (anchor the MissingToMaxDepth+DepthTo3DLocations pair, vary only agent_id).
+  Resulting top-level two_agent_surf.yaml shrinks to just:
+  ```python
+  defaults:
+  - /monty/agent_monty_configs: two_surf_agents_evidence
+  - /environment: two_surf_agents_habitat
+  - /env_interface: eval_distinctobj_random_2surf
+  - /logging: detailed_debug_monty_runs
+
+experiment:
+  _target_: tbp.monty.frameworks.experiments.multi_agent_experiment.MultiAgentMontyExperiment
+  config:
+    show_sensor_output: false
+    max_train_steps: 10
+    max_eval_steps: 2500
+    max_total_steps: 2500
+    n_train_epochs: 3
+    n_eval_epochs: 10
+    min_lms_match: 1
+    seed: 42
+    supervised_lm_ids: []
+    model_name_or_path: null
+    do_train: false
+    do_eval: true
+    logging:
+      run_name: two_agent_surf
+      monty_handlers:
+        - ${monty.class:tbp.monty.frameworks.loggers.monty_handlers.MultiAgentCSVStatsHandler}
+        - ${monty.class:tbp.monty.frameworks.loggers.monty_handlers.DetailedJSONHandler}
+        ```
+````
+
+(dropping the two dead /monty / /monty/motor_system_config defaults entries we found earlier — they write into experiment.config.monty_config, which MultiAgentMontyExperiment never reads).
+
+That's the whole file — from ~280 lines down to ~25, with the two-agent-specific detail living in exactly two well-named files instead of duplicated inline blocks.
+
+## 2026Sep5 - fixing the separate config files issue
+
+The code change
+
+MultiAgentMontyExperiment needs agent_monty_configs to be a dict instead of a list — 3 small edits in multi_agent_experiment.py:
+
+```python
+# __init__, currently:
+first_agent_cfg = config["agent_monty_configs"][0]
+# becomes:
+first_agent_cfg = next(iter(config["agent_monty_configs"].values()))
+
+# __init__, currently:
+config["monty_config"] = config["agent_monty_configs"][0]["monty_config"]
+# becomes:
+config["monty_config"] = next(iter(config["agent_monty_configs"].values()))["monty_config"]
+
+# _init_all_models, currently:
+for agent_cfg in config["agent_monty_configs"]:
+# becomes:
+for agent_cfg in config["agent_monty_configs"].values():
+```
+
+## 2026Sep8 - Implementing Layer 3 - the Inter-Agent Communication
+
+- what is already implemented:
+  Monty's voting mechanism is fully built — but entirely within one Monty instance, operating over self.learning_modules (a flat list belonging to one body):
+
+* EvidenceGraphLM.send_out_vote() packages each of an LM's plausible hypotheses (per object) as a Message — location, pose_vectors (rotation), confidence — plus the LM's own sensed_pose_rel_body.
+* MontyForEvidenceGraphMatching.\_combine_votes() transforms each incoming hypothesis from the sender's reference frame into the receiver's, using both LMs' sensed_pose_rel_body.
+* EvidenceGraphLM.receive_votes() folds the (already-transformed) hypotheses into its own evidence via \_update_evidence_with_vote().
+* lm_to_lm_vote_matrix (per-Monty config) controls which LM indices vote to which, within that one instance.
+
+- where is the shortcoming?
+  The payload format and the evidence-update logic are agent-agnostic already — receive_votes() doesn't care where a Message came from. That's the part you get for free.
+
+- the actual gap:
+  \_combine_votes()'s transform assumes sender and receiver share one body — it only ever compares two LMs' sensed_pose_rel_body values, which are each relative to that LM's own body's frame. With two separate physical agents at different world positions (your two_agent_surf.yaml setup: [0, 1.5, 0.2] vs [0, 1.5, -0.2]), a hypothesis location expressed relative to agent 0's body means something different than the same coordinates would relative to agent 1's body — there's no existing code that bridges that.
+
+The good news: the data to build that bridge already exists. proprioceptive_state (returned once per step by env_interface.step(), shared across all agents) is a ProprioceptiveState dict keyed by agent_id, and each entry already has that agent's absolute world-frame position and rotation (simulators/habitat/simulator.py builds this every step from Habitat's scene graph, for every physical agent in the scene). So computing "where agent 1's body is, relative to agent 0's body, right now" is a straightforward transform composition from data Monty already receives — it's just never been assembled into that shape anywhere in the codebase.
+
+- design a simulation experiment where two agents each with one lm communicate together through voting
+
+where is agent 1's body relative to agent 0's body, right now." That data lives in proprioceptive_state[agent_id].position / .rotation
+
+actually, each agent's `DepthTo3DLocations` transform already bakes that agent's absolute world position/rotation into every sensed point before Monty ever sees it (sensor_translation_rel_world = agent_position + rotated_sensor_position, in transforms.py). So two different agents' sensed_pose_rel_body values are already expressed in the same shared Habitat world frame — no extra pose-bridging math needed. MontyForEvidenceGraphMatching.\_combine_votes()'s existing per-LM-pair transform works unmodified across agents; it just needs to be pointed at learning modules living in different MontyBase instances instead of one instance's self.learning_modules.
+
+## 2026Sep10 - the design of Multi agents communication
+
+1- instead of the `lm_to_lm_vote_matrix` which is a matrix of LM indices and handles the connectivity within the same agent, i am implementing an edge list of `{sender: {agent, lm}, receiver: {agent, lm}}` pairs instead of a matrix a flat-index matrix over N agents × M LMs gets unreadable and error-prone fast (a 2×5 setup means indices 0-9 to keep straight by hand), whereas an edge list scales to any number of agents/LMs without any index arithmetic. Directional, so bidirectional voting needs both directions listed. (as i want the design to scale for more than 2 agents in the future)
+2- Agent/LM addressing by integer index, matching the existing `lm_to_lm_vote_matrix` convention — `agent: 0` means `self.monty_agents[0]`, which is `agent_monty_configs`'s first key (`agent0`) in insertion order. I didn't change `self.monty_agents` to a dict to preserve name-based addressing — that would ripple into `save_state_dict/load_state_dict`, which already key checkpoints by integer index.
+
+3- Matching-step gating. Intra-instance voting only fires during `_matching_step` (never `_exploratory_step`) via MontyForGraphMatching.\_vote(). I replicate that with agent.step_type != "matching_step" checks — irrelevant for your first (eval-only) experiment since eval never enters exploratory steps, but it means this same code won't misbehave once you add training or asymmetric multi-LM agents where one agent might be exploring while another matches.
+
+4- Generalizes to N LMs per agent for free — nothing in the code below assumes exactly one LM per agent; lm_idx just indexes into agent.learning_modules, however many there are. Your 1-LM-each experiment is just an edge list with 2 entries; a 5-LM-each experiment is the same code with a longer edge list.
+
+## 2026Sep15 - Implementing multi agent communication through voting (LM_k <-> LM_k)
+
+Intra-agent vote happens first, inside Agent 0's own agent.step() call. LM_0 sends/receives votes with Agent 0's LM_1, LM_2, LM_3, LM_4 (fully connected, via 5lm_5sm.yaml's lm_to_lm_vote_matrix). This calls LM_0.receive_votes(...), which updates its evidence and recomputes its possible_matches/MLH.
+Then cross-agent voting happens, in \_communicate_between_agents(), which only runs after every agent has finished its own .step() for this cycle. At this point, LM_0 on Agent 1 has already gone through the exact same process — it already combined with Agent 1's LM_1-4 in step 1, on Agent 1's own turn. So when Agent 0's LM_0 sends its vote across, it's sending evidence already shaped by its own group; when it receives Agent 1's LM_0's vote, that's also already shaped by its group.
+Agent 0's LM_0 then calls receive_votes(...) a second time — once for the intra-agent vote (step 1) and once more for the cross-agent vote (step 2) — each call independently re-thresholding possible_matches and recomputing the MLH.
+
+Wiring: which sensor feeds which LM
+sm_to_lm_matrix is the explicit connectivity — you saw this directly in 5lm_5sm.yaml:
+
+```
+sm_to_lm_matrix:
+- - 0   # LM_0 <- sensor_module_0 (patch_0)
+- - 1   # LM_1 <- sensor_module_1 (patch_1)
+- - 2
+- - 3
+- - 4
+```
+
+It's 1:1 in this setup — each of the 5 patches feeds exactly one LM, and each LM only ever sees its own patch's input. The view_finder sensor isn't in this matrix at all (no LM entry) — it's only used for repositioning/visualization (GetGoodViewFactory), never fed into recognition.
+
+The physical arrangement
+
+This is the part built: in `two_dist_agents_5lm_habitat.yaml`, the 5 patches sit at the same body position but with tiny local offsets — `[0,0,0]` (center), `[0,0.01,0]` (up), `[0,-0.01,0]` (down), `[0.01,0,0]` (right), `[-0.01,0,0]` (left) — a cross pattern, all zoomed in (zoom: 10.0), all pointed the same direction. So the 5 LMs aren't looking at wildly different views — they're looking at slightly different, overlapping patches of the same local region, like 5 adjacent columns in V1 all getting input from neighboring retinal patches.
+Voting: how the LMs actually talk to each other
+
+This is the mechanism we spent real time on for cross-agent voting — it's the same protocol, just running between LMs on one body instead of across two bodies. lm_to_lm_vote_matrix says who talks to whom:
+
+```
+lm_to_lm_vote_matrix:
+- - 1
+  - 2
+  - 3
+  - 4
+- - 0
+  - 2
+  - 3
+  - 4
+...
+```
+
+`lm_to_lm_vote_matrix[i] =` the list of LM indices that LM i receives votes from — here, fully connected (everyone talks to everyone else, self excluded).

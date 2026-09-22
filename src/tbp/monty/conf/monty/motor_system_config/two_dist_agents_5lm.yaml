@@ -1,0 +1,58 @@
+# @package experiment.config.agent_monty_configs
+
+# Motor system config for both agents in the two-agent 5-LM distant
+# experiment, in one file (same reasoning as
+# monty/motor_system_config/two_surf_agents.yaml): a DistantPolicySelector
+# with jump/look-at-goal and a default InformedPolicyRandomWalk, mirroring
+# monty/motor_system_config/distant_5.yaml, scoped per agent via agent_id.
+agent0:
+  monty_config:
+    motor_system_config:
+      _target_: tbp.monty.frameworks.models.motor_system.MotorSystem
+      policy_selector:
+        _target_: tbp.monty.frameworks.models.motor_policy_selectors.DistantPolicySelector
+        jump_to_goal:
+          _target_: ${monty.class:tbp.monty.frameworks.models.motor_policies.JumpToGoal}
+          agent_id: agent_id_0
+          sensor_id: view_finder
+        look_at_goal:
+          _target_: ${monty.class:tbp.monty.frameworks.models.salience.motor_policy.LookAtGoal}
+          agent_id: agent_id_0
+          sensor_id: view_finder
+        default:
+          _target_: ${monty.class:tbp.monty.frameworks.models.motor_policies.InformedPolicyRandomWalk}
+          agent_id: agent_id_0
+          action_sampler:
+            _target_: tbp.monty.frameworks.actions.action_samplers.ConstantSampler
+            actions:
+              - ${monty.class:tbp.monty.frameworks.actions.actions.LookUp}
+              - ${monty.class:tbp.monty.frameworks.actions.actions.LookDown}
+              - ${monty.class:tbp.monty.frameworks.actions.actions.TurnLeft}
+              - ${monty.class:tbp.monty.frameworks.actions.actions.TurnRight}
+            rotation_degrees: 5.0
+
+agent1:
+  monty_config:
+    motor_system_config:
+      _target_: tbp.monty.frameworks.models.motor_system.MotorSystem
+      policy_selector:
+        _target_: tbp.monty.frameworks.models.motor_policy_selectors.DistantPolicySelector
+        jump_to_goal:
+          _target_: ${monty.class:tbp.monty.frameworks.models.motor_policies.JumpToGoal}
+          agent_id: agent_id_1
+          sensor_id: view_finder
+        look_at_goal:
+          _target_: ${monty.class:tbp.monty.frameworks.models.salience.motor_policy.LookAtGoal}
+          agent_id: agent_id_1
+          sensor_id: view_finder
+        default:
+          _target_: ${monty.class:tbp.monty.frameworks.models.motor_policies.InformedPolicyRandomWalk}
+          agent_id: agent_id_1
+          action_sampler:
+            _target_: tbp.monty.frameworks.actions.action_samplers.ConstantSampler
+            actions:
+              - ${monty.class:tbp.monty.frameworks.actions.actions.LookUp}
+              - ${monty.class:tbp.monty.frameworks.actions.actions.LookDown}
+              - ${monty.class:tbp.monty.frameworks.actions.actions.TurnLeft}
+              - ${monty.class:tbp.monty.frameworks.actions.actions.TurnRight}
+            rotation_degrees: 5.0

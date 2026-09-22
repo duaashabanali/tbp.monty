@@ -1,0 +1,24 @@
+# @package experiment.config.train_env_interface_args
+
+# Same as getgoodview_viewfinder_patch0.yaml, but for both agents in one
+# file -- positioning_procedures is a plain list under
+# train_env_interface_args (not per-agent), so it can't be composed
+# per-agent via separate defaults entries the way agent_monty_configs.<agent>
+# pieces are.
+positioning_procedures:
+  - _target_: tbp.monty.frameworks.environments.positioning_procedures.GetGoodViewFactory
+    agent_id: agent_id_0
+    sensor_id: view_finder
+  - _target_: tbp.monty.frameworks.environments.positioning_procedures.GetGoodViewFactory
+    agent_id: agent_id_0
+    sensor_id: patch_0
+    allow_translation: false
+    max_orientation_attempts: 3
+  - _target_: tbp.monty.frameworks.environments.positioning_procedures.GetGoodViewFactory
+    agent_id: agent_id_1
+    sensor_id: view_finder
+  - _target_: tbp.monty.frameworks.environments.positioning_procedures.GetGoodViewFactory
+    agent_id: agent_id_1
+    sensor_id: patch_0
+    allow_translation: false
+    max_orientation_attempts: 3

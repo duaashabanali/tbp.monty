@@ -1,0 +1,103 @@
+# @package experiment.config.environment
+
+# The Habitat environment shared by both agents in the two-agent 5-LM
+# distant experiment: which object is placed in the scene, the two physical
+# agents (each a MultiSensorAgent with 5 zoomed-in patches + a view_finder,
+# copied verbatim from environment/habitat_dist_agent_sensors5.yaml) and the
+# transform pipeline that converts their raw observations into 3D point
+# clouds. The two agents share an identical sensor rig, differing only in
+# `agent_id` and world `position` -- Agent 0's entries are anchored and
+# merged into Agent 1's via YAML anchors, which must appear before they are
+# referenced, so Agent 0 must stay first in each list below.
+
+env_init_func: ${monty.class:tbp.monty.simulators.habitat.environment.HabitatEnvironment}
+env_init_args:
+  scene_id: null
+  seed: 42
+  data_path: ${path.expanduser:${oc.env:MONTY_DATA}/habitat/objects/ycb}
+  objects:
+    - name: mug
+      position: [0.0, 1.5, 0.0]
+  # Two physical agents in one shared Habitat sim. Each is a MultiSensorAgent
+  # with 5 co-located, slightly offset zoomed-in `patch_N` sensors (used for
+  # recognition, one per LM) and a `view_finder` sensor (zoomed out, used
+  # only for positioning/visualization).
+  agents:
+    # Agent 0, positioned in front of the object.
+    - agent_type: ${monty.class:tbp.monty.simulators.habitat.MultiSensorAgent}
+      agent_args: &agent0_args
+        agent_id: agent_id_0
+        sensor_ids: [patch_0, patch_1, patch_2, patch_3, patch_4, view_finder]
+        height: 0.0
+        position: [0.0, 1.5, 0.2]
+        resolutions:
+          - [64, 64]
+          - [64, 64]
+          - [64, 64]
+          - [64, 64]
+          - [64, 64]
+          - [64, 64]
+        # Tiny local offsets between the 5 patches (center, up, down, right,
+        # left), copied from habitat_dist_agent_sensors5.yaml.
+        positions:
+          - [0.0, 0.0, 0.0]
+          - [0.0, 0.01, 0.0]
+          - [0.0, -0.01, 0.0]
+          - [0.01, 0.0, 0.0]
+          - [-0.01, 0.0, 0.0]
+          - [0.0, 0.0, 0.0]
+        rotations:
+          - [1.0, 0.0, 0.0, 0.0]
+          - [1.0, 0.0, 0.0, 0.0]
+          - [1.0, 0.0, 0.0, 0.0]
+          - [1.0, 0.0, 0.0, 0.0]
+          - [1.0, 0.0, 0.0, 0.0]
+          - [1.0, 0.0, 0.0, 0.0]
+        semantics: [false, false, false, false, false, false]
+        zooms: [10.0, 10.0, 10.0, 10.0, 10.0, 1.0]
+        action_space_type: distant_agent
+    # Agent 1 -- identical sensor setup to Agent 0, but positioned on the
+    # opposite side of the object so the two agents explore it from
+    # different starting points. Body identity rotation faces -Z (confirmed
+    # via HabitatAgent.initialize()); Agent 0 works unmodified because it
+    # sits on the +Z side of the object, facing it by default. Agent 1 is on
+    # the -Z side, so without an explicit body rotation it would inherit
+    # that same -Z-facing default and end up looking away from the object --
+    # rotate 180 degrees about Y (quaternion w,x,y,z) so it faces +Z, back
+    # toward the object.
+    - agent_type: ${monty.class:tbp.monty.simulators.habitat.MultiSensorAgent}
+      agent_args:
+        <<: *agent0_args
+        agent_id: agent_id_1
+        position: [0.0, 1.5, -0.2]
+        rotation: [0.0, 0.0, 1.0, 0.0]
+
+# Transform pipeline that turns raw Habitat observations (depth, semantic
+# masks) into 3D point-cloud locations before they reach Monty. Applied once
+# per agent, since each agent's sensors are scoped separately.
+transform:
+  # Agent 0 transforms
+  - _target_: tbp.monty.frameworks.environment_utils.transforms.MissingToMaxDepth
+    agent_id: agent_id_0
+    max_depth: 1
+  - &agent0_depth_transform
+    _target_: tbp.monty.frameworks.environment_utils.transforms.DepthTo3DLocations
+    agent_id: agent_id_0
+    sensor_ids: [patch_0, patch_1, patch_2, patch_3, patch_4, view_finder]
+    resolutions:
+      - [64, 64]
+      - [64, 64]
+      - [64, 64]
+      - [64, 64]
+      - [64, 64]
+      - [64, 64]
+    world_coord: true
+    zooms: [10.0, 10.0, 10.0, 10.0, 10.0, 1.0]
+    get_all_points: true
+    use_semantic_sensor: false
+  # Agent 1 transforms
+  - _target_: tbp.monty.frameworks.environment_utils.transforms.MissingToMaxDepth
+    agent_id: agent_id_1
+    max_depth: 1
+  - <<: *agent0_depth_transform
+    agent_id: agent_id_1

@@ -1,0 +1,11 @@
+# @package experiment.config.monty_config
+
+# Same as 1lm_1sm.yaml, but scoped to Agent 1's physical agent (agent_id_1)
+# for the two-agent surf experiment.
+sm_to_agent_dict:
+  patch: agent_id_1
+  view_finder: agent_id_1
+sm_to_lm_matrix:
+  - - 0
+lm_to_lm_matrix: null
+lm_to_lm_vote_matrix: null
